@@ -4,6 +4,7 @@
 #include "stl_parser.h"
 #include "topology_evaluator.h"
 #include "gpu_accelerator.h"
+#include "slicer.h"
 
 void print_gpu_test_usage(const char* program_name) {
     printf("GPU Acceleration Test Program\n");
@@ -48,17 +49,17 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     
-    stl_print_info(stl);
+    print_stl_info(stl);
     printf("\n");
     
     // Initialize GPU acceleration
     printf("Initializing GPU acceleration (mode: %d)...\n", gpu_mode);
     gpu_context_t* gpu_ctx = gpu_init(gpu_mode);
     
-    if (gpu_ctx && gpu_is_available(gpu_ctx)) {
+    if (gpu_ctx && is_gpu_available(gpu_ctx)) {
         printf("✓ GPU acceleration initialized successfully\n");
-        gpu_capabilities_t caps = gpu_get_capabilities(gpu_ctx);
-        gpu_print_capabilities(&caps);
+        gpu_capabilities_t caps = get_gpu_capabilities(gpu_ctx);
+        print_gpu_capabilities(&caps);
         
         // Test GPU-accelerated topology analysis
         printf("\nTesting GPU-accelerated topology analysis...\n");
@@ -68,7 +69,7 @@ int main(int argc, char* argv[]) {
             
             // Test GPU connectivity analysis
             printf("Testing GPU connectivity analysis...\n");
-            if (gpu_analyze_connectivity(stl, eval, gpu_ctx)) {
+            if (analyze_gpu_connectivity(stl, eval, gpu_ctx)) {
                 printf("✓ GPU connectivity analysis completed\n");
             } else {
                 printf("✗ GPU connectivity analysis failed\n");
@@ -76,7 +77,7 @@ int main(int argc, char* argv[]) {
             
             // Test GPU curvature analysis
             printf("Testing GPU curvature analysis...\n");
-            if (gpu_analyze_curvature(stl, eval, gpu_ctx)) {
+            if (analyze_gpu_curvature(stl, eval, gpu_ctx)) {
                 printf("✓ GPU curvature analysis completed\n");
             } else {
                 printf("✗ GPU curvature analysis failed\n");
@@ -86,7 +87,7 @@ int main(int argc, char* argv[]) {
             printf("Testing GPU triangle sorting...\n");
             unsigned int* indices = malloc(stl->num_triangles * sizeof(unsigned int));
             if (indices) {
-                if (gpu_sort_triangles_by_axis(stl, indices, stl->num_triangles, 0, gpu_ctx)) {
+                if (sort_gpu_triangles_by_axis(stl, indices, stl->num_triangles, 0, gpu_ctx)) {
                     printf("✓ GPU triangle sorting completed\n");
                 } else {
                     printf("✗ GPU triangle sorting failed\n");
@@ -99,7 +100,7 @@ int main(int argc, char* argv[]) {
             contour_t contours[10];
             unsigned int num_contours = 0;
             float z_height = (stl->bounds[2] + stl->bounds[5]) / 2.0f; // Middle Z
-            if (gpu_generate_contours(stl, z_height, contours, &num_contours, gpu_ctx)) {
+            if (generate_gpu_contours(stl, z_height, contours, &num_contours, gpu_ctx)) {
                 printf("✓ GPU contour generation completed (%u contours)\n", num_contours);
             } else {
                 printf("✗ GPU contour generation failed\n");
@@ -113,7 +114,7 @@ int main(int argc, char* argv[]) {
     } else {
         if (gpu_mode == GPU_MODE_GPU_ONLY) {
             fprintf(stderr, "Error: GPU-only mode requested but GPU not available\n");
-            stl_free(stl);
+            free_stl(stl);
             return 1;
         } else {
             printf("✗ GPU acceleration not available, falling back to CPU\n");
@@ -121,8 +122,8 @@ int main(int argc, char* argv[]) {
     }
     
     // Cleanup
-    if (gpu_ctx) gpu_cleanup(gpu_ctx);
-    stl_free(stl);
+    if (gpu_ctx) cleanup_gpu(gpu_ctx);
+    free_stl(stl);
     
     printf("\nGPU acceleration test completed!\n");
     return 0;

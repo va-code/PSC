@@ -4,6 +4,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <float.h>
+#include <stdbool.h>
 
 // Main evaluation functions
 topology_evaluation_t* evaluate_topology(const stl_file_t* stl, topology_analysis_type_t analysis_type) {
@@ -86,12 +87,16 @@ topology_evaluation_t* evaluate_topology(const stl_file_t* stl, topology_analysi
         case TOPO_ANALYSIS_QUALITY:
             analyze_quality(stl, eval);
             break;
+        case TOPO_ANALYSIS_HOLES:
+            detect_holes(stl, eval);
+            break;
         case TOPO_ANALYSIS_COMPLETE:
             analyze_connectivity(stl, eval);
             analyze_curvature(stl, eval);
             analyze_features(stl, eval);
             analyze_density(stl, eval);
             analyze_quality(stl, eval);
+            detect_holes(stl, eval);
             break;
     }
     
@@ -142,12 +147,32 @@ void free_topology_evaluation(topology_evaluation_t* eval) {
     if (eval->curvature.high_curvature_regions) free(eval->curvature.high_curvature_regions);
     if (eval->curvature.low_curvature_regions) free(eval->curvature.low_curvature_regions);
     
+    // Free hole detection arrays
+    free_hole_detection(&eval->holes);
+    
     free(eval);
 }
 
 // Analysis functions
 int analyze_connectivity(const stl_file_t* stl, topology_evaluation_t* eval) {
     if (!stl || !eval) return 0;
+    
+    // Set up triangle vertices and calculate valence
+    float tolerance = 1e-6f;
+    for (unsigned int i = 0; i < stl->num_triangles; i++) {
+        const stl_triangle_t* tri = &stl->triangles[i];
+        
+        for (int j = 0; j < 3; j++) {
+            // Find vertex index in our unique vertex list
+            for (unsigned int k = 0; k < eval->num_vertices; k++) {
+                if (distance_3d(tri->vertices[j], eval->vertices[k].position) < tolerance) {
+                    eval->triangles[i].vertices[j] = k;
+                    eval->vertices[k].valence++;
+                    break;
+                }
+            }
+        }
+    }
     
     // Count boundary edges
     eval->num_boundary_edges = 0;
@@ -397,10 +422,12 @@ unsigned int build_edge_list(const stl_file_t* stl, topology_evaluation_t* eval)
             
             // Check if this edge already exists
             int edge_exists = 0;
+            unsigned int existing_edge_idx = 0;
             for (unsigned int k = 0; k < edge_count; k++) {
                 if ((eval->edges[k].vertex1 == vertex1_idx && eval->edges[k].vertex2 == vertex2_idx) ||
                     (eval->edges[k].vertex1 == vertex2_idx && eval->edges[k].vertex2 == vertex1_idx)) {
                     edge_exists = 1;
+                    existing_edge_idx = k;
                     eval->edges[k].triangle2 = i; // Second triangle sharing this edge
                     break;
                 }
@@ -416,7 +443,13 @@ unsigned int build_edge_list(const stl_file_t* stl, topology_evaluation_t* eval)
                 eval->edges[edge_count].dihedral_angle = 0.0f; // Will be calculated later
                 eval->edges[edge_count].is_boundary = 1; // Will be updated if shared
                 
+                // Set the edge index in the triangle
+                eval->triangles[i].edges[j] = edge_count;
+                
                 edge_count++;
+            } else {
+                // Set the edge index in the triangle for existing edge
+                eval->triangles[i].edges[j] = existing_edge_idx;
             }
         }
     }
@@ -700,6 +733,7 @@ void print_topology_summary(const topology_evaluation_t* eval) {
     printf("Isolated vertices: %u\n", eval->num_isolated_vertices);
     printf("Connectivity score: %.3f\n", eval->connectivity_score);
     printf("Feature richness: %.3f\n", eval->feature_richness);
+    printf("Holes detected: %u\n", eval->holes.num_loops);
     printf("\n");
 }
 
@@ -844,5 +878,343 @@ void print_slicing_recommendations(const slicing_recommendations_t* recs) {
     printf("Recommended shell count: %u\n", recs->recommended_shells);
     printf("Recommended print speed: %.1f mm/s\n", recs->recommended_speed);
     printf("Slicing strategy: %s\n", recs->slicing_strategy);
+    printf("\n");
+}
+
+// Hole detection functions
+
+// Helper function to find triangles connected to a given triangle
+static void find_connected_triangles(const topology_evaluation_t* eval, 
+                                   unsigned int triangle_idx, 
+                                   unsigned int* connected_tris, 
+                                   unsigned int* num_connected) {
+    *num_connected = 0;
+    
+    // Get the edges of the current triangle
+    unsigned int edges[3];
+    for (int i = 0; i < 3; i++) {
+        edges[i] = eval->triangles[triangle_idx].edges[i];
+    }
+    
+    // Find triangles that share these edges
+    for (unsigned int i = 0; i < eval->num_edges; i++) {
+        for (int j = 0; j < 3; j++) {
+            if (i == edges[j]) {
+                // This edge belongs to our triangle
+                if (eval->edges[i].triangle1 == triangle_idx && eval->edges[i].triangle2 != -1) {
+                    connected_tris[*num_connected] = eval->edges[i].triangle2;
+                    (*num_connected)++;
+                } else if (eval->edges[i].triangle2 == triangle_idx && eval->edges[i].triangle1 != -1) {
+                    connected_tris[*num_connected] = eval->edges[i].triangle1;
+                    (*num_connected)++;
+                }
+            }
+        }
+    }
+}
+
+// Helper function to check if a loop is continuous
+static int is_loop_continuous(const hole_loop_t* loop, const topology_evaluation_t* eval) {
+    if (loop->num_edges < 3) return 0; // Need at least 3 edges for a valid loop
+    
+    // Check if each edge connects to the next
+    for (unsigned int i = 0; i < loop->num_edges; i++) {
+        unsigned int current_edge = loop->edge_indices[i];
+        unsigned int next_edge = loop->edge_indices[(i + 1) % loop->num_edges];
+        
+        // Check if these edges share a vertex
+        unsigned int v1 = eval->edges[current_edge].vertex1;
+        unsigned int v2 = eval->edges[current_edge].vertex2;
+        unsigned int v3 = eval->edges[next_edge].vertex1;
+        unsigned int v4 = eval->edges[next_edge].vertex2;
+        
+        if (v1 != v3 && v1 != v4 && v2 != v3 && v2 != v4) {
+            return 0; // Edges don't connect
+        }
+    }
+    
+    return 1; // Loop is continuous
+}
+
+// Helper function to calculate loop perimeter
+static float calculate_loop_perimeter(const hole_loop_t* loop, const topology_evaluation_t* eval) {
+    float perimeter = 0.0f;
+    
+    for (unsigned int i = 0; i < loop->num_edges; i++) {
+        unsigned int edge_idx = loop->edge_indices[i];
+        perimeter += eval->edges[edge_idx].length;
+    }
+    
+    return perimeter;
+}
+
+// Helper function to check if loops share vertices
+static void find_shared_vertices(const hole_detection_t* holes, 
+                                const topology_evaluation_t* eval,
+                                unsigned int* shared_vertices, 
+                                unsigned int* num_shared) {
+    *num_shared = 0;
+    
+    if (holes->num_loops < 2) return;
+    
+    // For each pair of loops, check for shared vertices
+    for (unsigned int i = 0; i < holes->num_loops; i++) {
+        for (unsigned int j = i + 1; j < holes->num_loops; j++) {
+            for (unsigned int k = 0; k < holes->loops[i].num_vertices; k++) {
+                for (unsigned int l = 0; l < holes->loops[j].num_vertices; l++) {
+                    if (holes->loops[i].vertex_indices[k] == holes->loops[j].vertex_indices[l]) {
+                        // Check if this vertex is already in our shared list
+                        int already_found = 0;
+                        for (unsigned int m = 0; m < *num_shared; m++) {
+                            if (shared_vertices[m] == holes->loops[i].vertex_indices[k]) {
+                                already_found = 1;
+                                break;
+                            }
+                        }
+                        
+                        if (!already_found) {
+                            shared_vertices[*num_shared] = holes->loops[i].vertex_indices[k];
+                            (*num_shared)++;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+int detect_holes(const stl_file_t* stl, topology_evaluation_t* eval) {
+    if (!stl || !eval) return 0;
+    
+    // Initialize hole detection structure
+    eval->holes.loops = NULL;
+    eval->holes.num_loops = 0;
+    eval->holes.shared_vertices = NULL;
+    eval->holes.num_shared_vertices = 0;
+    eval->holes.has_intersecting_loops = 0;
+    
+    // Allocate visited array for triangles
+    bool* visited = calloc(eval->num_triangles, sizeof(bool));
+    if (!visited) return 0;
+    
+    // Allocate arrays for storing loops
+    unsigned int max_loops = eval->num_triangles / 3; // Rough estimate
+    eval->holes.loops = malloc(max_loops * sizeof(hole_loop_t));
+    if (!eval->holes.loops) {
+        free(visited);
+        return 0;
+    }
+    
+    // Allocate arrays for storing edges in loops
+    unsigned int max_edges_per_loop = eval->num_edges;
+    for (unsigned int i = 0; i < max_loops; i++) {
+        eval->holes.loops[i].edge_indices = malloc(max_edges_per_loop * sizeof(unsigned int));
+        eval->holes.loops[i].vertex_indices = malloc(max_edges_per_loop * sizeof(unsigned int));
+        if (!eval->holes.loops[i].edge_indices || !eval->holes.loops[i].vertex_indices) {
+            // Cleanup on failure
+            for (unsigned int j = 0; j < i; j++) {
+                free(eval->holes.loops[j].edge_indices);
+                free(eval->holes.loops[j].vertex_indices);
+            }
+            free(eval->holes.loops);
+            free(visited);
+            return 0;
+        }
+        eval->holes.loops[i].num_edges = 0;
+        eval->holes.loops[i].num_vertices = 0;
+        eval->holes.loops[i].is_continuous = 0;
+        eval->holes.loops[i].perimeter = 0.0f;
+    }
+    
+    // Start from each unvisited triangle
+    for (unsigned int start_tri = 0; start_tri < eval->num_triangles; start_tri++) {
+        if (visited[start_tri]) continue;
+        
+        // Start a new potential loop
+        unsigned int current_loop = eval->holes.num_loops;
+        if (current_loop >= max_loops) break;
+        
+        // Use a stack for DFS traversal
+        unsigned int* stack = malloc(eval->num_triangles * sizeof(unsigned int));
+        unsigned int stack_size = 0;
+        
+        if (!stack) {
+            free(visited);
+            return 0;
+        }
+        
+        // Start with the current triangle
+        stack[stack_size++] = start_tri;
+        visited[start_tri] = true;
+        
+        // Track edges that form the loop
+        unsigned int* loop_edges = malloc(eval->num_edges * sizeof(unsigned int));
+        unsigned int num_loop_edges = 0;
+        
+        if (!loop_edges) {
+            free(stack);
+            free(visited);
+            return 0;
+        }
+        
+        // DFS traversal to find connected triangles
+        while (stack_size > 0) {
+            unsigned int current_tri = stack[--stack_size];
+            
+            // Find connected triangles
+            unsigned int connected_tris[10]; // Max 10 connected triangles per triangle
+            unsigned int num_connected;
+            find_connected_triangles(eval, current_tri, connected_tris, &num_connected);
+            
+            for (unsigned int i = 0; i < num_connected; i++) {
+                unsigned int next_tri = connected_tris[i];
+                
+                if (!visited[next_tri]) {
+                    // Add to stack for further exploration
+                    stack[stack_size++] = next_tri;
+                    visited[next_tri] = true;
+                } else {
+                    // This triangle has been visited before - potential loop edge
+                    // Find the edge between current_tri and next_tri
+                    for (unsigned int j = 0; j < eval->num_edges; j++) {
+                        if ((eval->edges[j].triangle1 == current_tri && eval->edges[j].triangle2 == next_tri) ||
+                            (eval->edges[j].triangle1 == next_tri && eval->edges[j].triangle2 == current_tri)) {
+                            
+                            // Check if this edge is already in our loop
+                            int edge_already_in_loop = 0;
+                            for (unsigned int k = 0; k < num_loop_edges; k++) {
+                                if (loop_edges[k] == j) {
+                                    edge_already_in_loop = 1;
+                                    break;
+                                }
+                            }
+                            
+                            if (!edge_already_in_loop) {
+                                loop_edges[num_loop_edges++] = j;
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        
+        // If we found edges that form a potential loop
+        if (num_loop_edges > 0) {
+            // Store the loop
+            eval->holes.loops[current_loop].num_edges = num_loop_edges;
+            memcpy(eval->holes.loops[current_loop].edge_indices, loop_edges, 
+                   num_loop_edges * sizeof(unsigned int));
+            
+            // Extract unique vertices from the loop edges
+            unsigned int* loop_vertices = malloc(eval->num_vertices * sizeof(unsigned int));
+            unsigned int num_loop_vertices = 0;
+            
+            for (unsigned int i = 0; i < num_loop_edges; i++) {
+                unsigned int edge_idx = loop_edges[i];
+                unsigned int v1 = eval->edges[edge_idx].vertex1;
+                unsigned int v2 = eval->edges[edge_idx].vertex2;
+                
+                // Add vertices if not already in list
+                int v1_found = 0, v2_found = 0;
+                for (unsigned int j = 0; j < num_loop_vertices; j++) {
+                    if (loop_vertices[j] == v1) v1_found = 1;
+                    if (loop_vertices[j] == v2) v2_found = 1;
+                }
+                
+                if (!v1_found) {
+                    loop_vertices[num_loop_vertices++] = v1;
+                }
+                if (!v2_found) {
+                    loop_vertices[num_loop_vertices++] = v2;
+                }
+            }
+            
+            eval->holes.loops[current_loop].num_vertices = num_loop_vertices;
+            memcpy(eval->holes.loops[current_loop].vertex_indices, loop_vertices,
+                   num_loop_vertices * sizeof(unsigned int));
+            
+            // Check if loop is continuous
+            eval->holes.loops[current_loop].is_continuous = 
+                is_loop_continuous(&eval->holes.loops[current_loop], eval);
+            
+            // Calculate perimeter
+            eval->holes.loops[current_loop].perimeter = 
+                calculate_loop_perimeter(&eval->holes.loops[current_loop], eval);
+            
+            // Only keep continuous loops
+            if (eval->holes.loops[current_loop].is_continuous) {
+                eval->holes.num_loops++;
+            } else {
+                // Remove the loop if not continuous
+                eval->holes.loops[current_loop].num_edges = 0;
+                eval->holes.loops[current_loop].num_vertices = 0;
+            }
+            
+            free(loop_vertices);
+        }
+        
+        free(loop_edges);
+        free(stack);
+    }
+    
+    // Find shared vertices between loops
+    if (eval->holes.num_loops > 0) {
+        eval->holes.shared_vertices = malloc(eval->num_vertices * sizeof(unsigned int));
+        if (eval->holes.shared_vertices) {
+            find_shared_vertices(&eval->holes, eval, 
+                                eval->holes.shared_vertices, 
+                                &eval->holes.num_shared_vertices);
+            
+            eval->holes.has_intersecting_loops = (eval->holes.num_shared_vertices > 0);
+        }
+    }
+    
+    free(visited);
+    return 1;
+}
+
+void free_hole_detection(hole_detection_t* holes) {
+    if (!holes) return;
+    
+    if (holes->loops) {
+        for (unsigned int i = 0; i < holes->num_loops; i++) {
+            if (holes->loops[i].edge_indices) {
+                free(holes->loops[i].edge_indices);
+            }
+            if (holes->loops[i].vertex_indices) {
+                free(holes->loops[i].vertex_indices);
+            }
+        }
+        free(holes->loops);
+    }
+    
+    if (holes->shared_vertices) {
+        free(holes->shared_vertices);
+    }
+    
+    holes->loops = NULL;
+    holes->num_loops = 0;
+    holes->shared_vertices = NULL;
+    holes->num_shared_vertices = 0;
+    holes->has_intersecting_loops = 0;
+}
+
+void print_hole_analysis(const hole_detection_t* holes) {
+    if (!holes) return;
+    
+    printf("Hole Detection Analysis\n");
+    printf("======================\n");
+    printf("Number of loops detected: %u\n", holes->num_loops);
+    printf("Number of shared vertices: %u\n", holes->num_shared_vertices);
+    printf("Has intersecting loops: %s\n", holes->has_intersecting_loops ? "Yes" : "No");
+    
+    for (unsigned int i = 0; i < holes->num_loops; i++) {
+        printf("Loop %u:\n", i + 1);
+        printf("  Edges: %u\n", holes->loops[i].num_edges);
+        printf("  Vertices: %u\n", holes->loops[i].num_vertices);
+        printf("  Perimeter: %.3f\n", holes->loops[i].perimeter);
+        printf("  Continuous: %s\n", holes->loops[i].is_continuous ? "Yes" : "No");
+    }
     printf("\n");
 } 

@@ -5,11 +5,13 @@
 #include <stdio.h>
 
 // Comparison structure for qsort
+//this structure takes is a stored verson of the stl where it has sorted based on an appliedaxis so the bvh can work more efficiently
+//I am a bit comfused what axis it comes from
 typedef struct {
     const stl_file_t* stl;
     sort_axis_t sort_axis;
 } sort_context_t;
-
+//takes a pointer to a sorted stl and a max number of triangles to be included in the final nodes.
 bvh_tree_t* bvh_create(const stl_file_t* stl, unsigned int max_triangles_per_leaf) {
     if (!stl || stl->num_triangles == 0) return NULL;
     
@@ -43,8 +45,8 @@ bvh_tree_t* bvh_create(const stl_file_t* stl, unsigned int max_triangles_per_lea
     
     return bvh;
 }
-
-void bvh_free(bvh_tree_t* bvh) {
+//takes a bvh tree and frees it's memory when done with it
+void free_bvh(bvh_tree_t* bvh) {
     if (!bvh) return;
     
     if (bvh->root) {
@@ -52,13 +54,13 @@ void bvh_free(bvh_tree_t* bvh) {
     }
     free(bvh);
 }
-
-void bvh_free_node(bvh_node_t* node) {
+//used under bvh_free to free the memory of each node that was used
+void free_bvh_node(bvh_node_t* node) {
     if (!node) return;
     
     if (node->type == BVH_INTERNAL) {
-        bvh_free_node(node->data.internal.left);
-        bvh_free_node(node->data.internal.right);
+        free_bvh_node(node->data.internal.left);
+        free_bvh_node(node->data.internal.right);
     } else if (node->type == BVH_LEAF) {
         if (node->data.leaf.triangle_indices) {
             free(node->data.leaf.triangle_indices);
@@ -95,13 +97,13 @@ bvh_node_t* bvh_build_recursive(const stl_file_t* stl, unsigned int* triangle_in
         memcpy(node->data.leaf.triangle_indices, triangle_indices, num_triangles * sizeof(unsigned int));
         
         // Calculate bounds for this leaf
-        bvh_calculate_bounds(node, stl);
+        calculate_bvh_bounds(node, stl);
         
         return node;
     }
     
     // Sort triangles by current axis
-    bvh_sort_triangles_by_axis(triangle_indices, num_triangles, stl, current_axis);
+    sort_triangles_by_axis(triangle_indices, num_triangles, stl, current_axis);
     
     // Split triangles into two groups
     unsigned int mid = num_triangles / 2;
@@ -117,19 +119,19 @@ bvh_node_t* bvh_build_recursive(const stl_file_t* stl, unsigned int* triangle_in
     
     if (!node->data.internal.left || !node->data.internal.right) {
         // Cleanup on failure
-        if (node->data.internal.left) bvh_free_node(node->data.internal.left);
-        if (node->data.internal.right) bvh_free_node(node->data.internal.right);
+        if (node->data.internal.left) free_bvh_node(node->data.internal.left);
+        if (node->data.internal.right) free_bvh_node(node->data.internal.right);
         free(node);
         return NULL;
     }
     
     // Calculate bounds for this internal node
-    bvh_calculate_bounds(node, stl);
+    calculate_bvh_bounds(node, stl);
     
     return node;
 }
 
-void bvh_calculate_bounds(bvh_node_t* node, const stl_file_t* stl) {
+void calculate_bvh_bounds(bvh_node_t* node, const stl_file_t* stl) {
     if (!node || !stl) return;
     
     if (node->type == BVH_LEAF) {
@@ -174,15 +176,15 @@ void bvh_calculate_bounds(bvh_node_t* node, const stl_file_t* stl) {
     }
 }
 
-void bvh_sort_triangles_by_axis(unsigned int* triangle_indices, unsigned int num_triangles,
+void sort_triangles_by_axis(unsigned int* triangle_indices, unsigned int num_triangles,
                                 const stl_file_t* stl, sort_axis_t sort_axis) {
     if (!triangle_indices || !stl || num_triangles == 0) return;
     
     sort_context_t context = {stl, sort_axis};
-    qsort_r(triangle_indices, num_triangles, sizeof(unsigned int), bvh_compare_triangles, &context);
+    qsort_r(triangle_indices, num_triangles, sizeof(unsigned int), compare_triangles, &context);
 }
 
-float bvh_get_center_coordinate(const stl_triangle_t* triangle, sort_axis_t axis) {
+float get_center_coordinate(const stl_triangle_t* triangle, sort_axis_t axis) {
     if (!triangle) return 0.0f;
     
     float center[3] = {0.0f, 0.0f, 0.0f};
@@ -207,7 +209,7 @@ float bvh_get_center_coordinate(const stl_triangle_t* triangle, sort_axis_t axis
     }
 }
 
-int bvh_compare_triangles(const void* a, const void* b, void* arg) {
+int compare_triangles(const void* a, const void* b, void* arg) {
     sort_context_t* context = (sort_context_t*)arg;
     unsigned int idx_a = *(unsigned int*)a;
     unsigned int idx_b = *(unsigned int*)b;
@@ -215,8 +217,8 @@ int bvh_compare_triangles(const void* a, const void* b, void* arg) {
     const stl_triangle_t* triangle_a = &context->stl->triangles[idx_a];
     const stl_triangle_t* triangle_b = &context->stl->triangles[idx_b];
     
-    float coord_a = bvh_get_center_coordinate(triangle_a, context->sort_axis);
-    float coord_b = bvh_get_center_coordinate(triangle_b, context->sort_axis);
+    float coord_a = get_center_coordinate(triangle_a, context->sort_axis);
+    float coord_b = get_center_coordinate(triangle_b, context->sort_axis);
     
     if (coord_a < coord_b) return -1;
     if (coord_a > coord_b) return 1;
@@ -236,14 +238,14 @@ spatial_partition_t* spatial_partition_create(const stl_file_t* stl, unsigned in
     partition->partition_bounds = malloc(num_partitions * 6 * sizeof(float));
     
     if (!partition->partition_ids || !partition->partition_bounds) {
-        spatial_partition_free(partition);
+        free_spatial_partition(partition);
         return NULL;
     }
     
     // Create BVH for efficient spatial queries
     partition->bvh = bvh_create(stl, 10);
     if (!partition->bvh) {
-        spatial_partition_free(partition);
+        free_spatial_partition(partition);
         return NULL;
     }
     
@@ -281,11 +283,11 @@ spatial_partition_t* spatial_partition_create(const stl_file_t* stl, unsigned in
     return partition;
 }
 
-void spatial_partition_free(spatial_partition_t* partition) {
+void free_spatial_partition(spatial_partition_t* partition) {
     if (!partition) return;
     
     if (partition->bvh) {
-        bvh_free(partition->bvh);
+        free_bvh(partition->bvh);
     }
     if (partition->partition_ids) {
         free(partition->partition_ids);
@@ -308,7 +310,7 @@ unsigned int* spatial_partition_get_triangles_in_region(const spatial_partition_
     return NULL;
 }
 
-void spatial_partition_print_info(const spatial_partition_t* partition) {
+void print_spatial_partition_info(const spatial_partition_t* partition) {
     if (!partition) return;
     
     printf("Spatial Partition Information:\n");
@@ -325,7 +327,7 @@ void spatial_partition_print_info(const spatial_partition_t* partition) {
 }
 
 // Utility functions
-void bvh_print_tree(const bvh_tree_t* bvh, int depth) {
+void print_bvh_tree(const bvh_tree_t* bvh, int depth) {
     if (!bvh || !bvh->root) return;
     
     printf("BVH Tree (max depth: %u, max triangles per leaf: %u):\n", 
@@ -333,7 +335,7 @@ void bvh_print_tree(const bvh_tree_t* bvh, int depth) {
     bvh_print_node(bvh->root, 0);
 }
 
-void bvh_print_node(const bvh_node_t* node, int depth) {
+void print_bvh_node(const bvh_node_t* node, int depth) {
     if (!node) return;
     
     // Print indentation
@@ -358,7 +360,7 @@ void bvh_print_node(const bvh_node_t* node, int depth) {
     }
 }
 
-float bvh_calculate_surface_area(const float bounds[6]) {
+float calculate_surface_area(const float bounds[6]) {
     float width = bounds[3] - bounds[0];
     float height = bounds[4] - bounds[1];
     float depth = bounds[5] - bounds[2];
@@ -366,7 +368,7 @@ float bvh_calculate_surface_area(const float bounds[6]) {
     return 2.0f * (width * height + width * depth + height * depth);
 }
 
-int bvh_intersects_bounds(const float bounds1[6], const float bounds2[6]) {
+int intersects_bounds(const float bounds1[6], const float bounds2[6]) {
     return (bounds1[0] <= bounds2[3] && bounds1[3] >= bounds2[0] &&
             bounds1[1] <= bounds2[4] && bounds1[4] >= bounds2[1] &&
             bounds1[2] <= bounds2[5] && bounds1[5] >= bounds2[2]);

@@ -23,14 +23,14 @@ stl_file_t* stl_load_file(const char* filename) {
 
     // Check if it's ASCII STL (starts with "solid")
     if (strncmp(stl->header, "solid", 5) == 0) {
-        if (stl_parse_ascii(file, stl) != 0) {
+        if (parse_stl_ascii(file, stl) != 0) {
             fprintf(stderr, "Error: Failed to parse ASCII STL\n");
             free(stl);
             fclose(file);
             return NULL;
         }
     } else {
-        if (stl_parse_binary(file, stl) != 0) {
+        if (parse_stl_binary(file, stl) != 0) {
             fprintf(stderr, "Error: Failed to parse binary STL\n");
             free(stl);
             fclose(file);
@@ -39,11 +39,11 @@ stl_file_t* stl_load_file(const char* filename) {
     }
 
     fclose(file);
-    stl_calculate_bounds(stl);
+    calculate_stl_bounds(stl);
     return stl;
 }
 
-void stl_free(stl_file_t* stl) {
+void free_stl(stl_file_t* stl) {
     if (stl) {
         if (stl->triangles) {
             free(stl->triangles);
@@ -52,7 +52,7 @@ void stl_free(stl_file_t* stl) {
     }
 }
 
-int stl_parse_ascii(FILE* file, stl_file_t* stl) {
+int parse_stl_ascii(FILE* file, stl_file_t* stl) {
     // Reset file position after header
     fseek(file, 0, SEEK_SET);
     
@@ -102,7 +102,7 @@ int stl_parse_ascii(FILE* file, stl_file_t* stl) {
     return 0;
 }
 
-int stl_parse_binary(FILE* file, stl_file_t* stl) {
+int parse_stl_binary(FILE* file, stl_file_t* stl) {
     // Skip header (already read)
     fseek(file, 80, SEEK_SET);
     
@@ -141,7 +141,7 @@ int stl_parse_binary(FILE* file, stl_file_t* stl) {
     return 0;
 }
 
-void stl_calculate_bounds(stl_file_t* stl) {
+void calculate_stl_bounds(stl_file_t* stl) {
     if (stl->num_triangles == 0) return;
     
     // Initialize bounds with first triangle
@@ -159,7 +159,7 @@ void stl_calculate_bounds(stl_file_t* stl) {
     }
 }
 
-void stl_print_info(const stl_file_t* stl) {
+void print_stl_info(const stl_file_t* stl) {
     printf("STL File Information:\n");
     printf("Header: %.80s\n", stl->header);
     printf("Number of triangles: %u\n", stl->num_triangles);

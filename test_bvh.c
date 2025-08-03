@@ -26,7 +26,7 @@ int main(int argc, char* argv[]) {
     }
     
     // Print STL information
-    stl_print_info(stl);
+    print_stl_info(stl);
     printf("\n");
     
     // Create BVH tree
@@ -34,13 +34,13 @@ int main(int argc, char* argv[]) {
     bvh_tree_t* bvh = bvh_create(stl, 10);
     if (!bvh) {
         fprintf(stderr, "Error: Failed to create BVH tree\n");
-        stl_free(stl);
+        free_stl(stl);
         return 1;
     }
     
     // Print BVH tree structure
     printf("BVH Tree Structure:\n");
-    bvh_print_tree(bvh, 0);
+    print_bvh_tree(bvh, 0);
     printf("\n");
     
     // Create spatial partition
@@ -48,13 +48,13 @@ int main(int argc, char* argv[]) {
     spatial_partition_t* partition = spatial_partition_create(stl, num_partitions, sort_axis);
     if (!partition) {
         fprintf(stderr, "Error: Failed to create spatial partition\n");
-        bvh_free(bvh);
-        stl_free(stl);
+        free_bvh(bvh);
+        free_stl(stl);
         return 1;
     }
     
     // Print partition information
-    spatial_partition_print_info(partition);
+    print_spatial_partition_info(partition);
     printf("\n");
     
     // Print triangle distribution across partitions
@@ -71,9 +71,9 @@ int main(int argc, char* argv[]) {
     
     // Cleanup
     free(partition_counts);
-    spatial_partition_free(partition);
-    bvh_free(bvh);
-    stl_free(stl);
+    free_spatial_partition(partition);
+    free_bvh(bvh);
+    free_stl(stl);
     
     printf("BVH test completed successfully!\n");
     return 0;

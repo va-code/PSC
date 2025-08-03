@@ -29,7 +29,7 @@ int main(int argc, char* argv[]) {
     }
     
     // Print STL information
-    stl_print_info(stl);
+    print_stl_info(stl);
     printf("\n");
     
     // Create convex decomposition
@@ -50,12 +50,12 @@ int main(int argc, char* argv[]) {
     convex_decomposition_t* decomp = decompose_model(stl, &params);
     if (!decomp) {
         fprintf(stderr, "Error: Failed to create convex decomposition\n");
-        stl_free(stl);
+        free_stl(stl);
         return 1;
     }
     
     // Print decomposition information
-    print_decomposition_info(decomp);
+    print_convex_decomposition_info(decomp);
     
     // Test different strategies
     printf("\nTesting different decomposition strategies:\n");
@@ -77,8 +77,8 @@ int main(int argc, char* argv[]) {
         
         convex_decomposition_t* test_decomp = decompose_model(stl, &test_params);
         if (test_decomp) {
-            print_decomposition_info(test_decomp);
-            convex_decomposition_free(test_decomp);
+            print_convex_decomposition_info(test_decomp);
+            free_convex_decomposition(test_decomp);
         } else {
             printf("Failed to create decomposition\n");
         }
@@ -104,16 +104,16 @@ int main(int argc, char* argv[]) {
         
         convex_decomposition_t* test_decomp = decompose_model(stl, &test_params);
         if (test_decomp) {
-            print_decomposition_info(test_decomp);
-            convex_decomposition_free(test_decomp);
+            print_convex_decomposition_info(test_decomp);
+            free_convex_decomposition(test_decomp);
         } else {
             printf("Failed to create decomposition\n");
         }
     }
     
     // Cleanup
-    convex_decomposition_free(decomp);
-    stl_free(stl);
+    free_convex_decomposition(decomp);
+    free_stl(stl);
     
     printf("\nConvex decomposition test completed successfully!\n");
     return 0;

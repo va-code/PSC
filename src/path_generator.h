@@ -36,7 +36,7 @@ typedef struct {
 
 // Function declarations
 path_generator_t* path_generator_create(const slicing_params_t* params);
-void path_generator_free(path_generator_t* generator);
+void free_path_generator(path_generator_t* generator);
 void generate_gcode_from_slices(path_generator_t* generator, const sliced_model_t* model);
 void add_gcode_command(path_generator_t* generator, gcode_command_t command);
 void write_gcode_to_file(path_generator_t* generator, const char* filename);

@@ -22,10 +22,10 @@ typedef struct {
 
 // Function declarations
 stl_file_t* stl_load_file(const char* filename);
-void stl_free(stl_file_t* stl);
-int stl_parse_ascii(FILE* file, stl_file_t* stl);
-int stl_parse_binary(FILE* file, stl_file_t* stl);
-void stl_calculate_bounds(stl_file_t* stl);
-void stl_print_info(const stl_file_t* stl);
+void free_stl(stl_file_t* stl);
+int parse_stl_ascii(FILE* file, stl_file_t* stl);
+int parse_stl_binary(FILE* file, stl_file_t* stl);
+void calculate_stl_bounds(stl_file_t* stl);
+void print_stl_info(const stl_file_t* stl);
 
 #endif // STL_PARSER_H 

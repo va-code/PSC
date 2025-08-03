@@ -26,7 +26,7 @@ int main(int argc, char* argv[]) {
     }
     
     // Print STL information
-    stl_print_info(stl);
+    print_stl_info(stl);
     printf("\n");
     
     // Perform topology analysis
@@ -34,7 +34,7 @@ int main(int argc, char* argv[]) {
     topology_evaluation_t* eval = evaluate_topology(stl, analysis_type);
     if (!eval) {
         fprintf(stderr, "Error: Failed to evaluate topology\n");
-        stl_free(stl);
+        free_stl(stl);
         return 1;
     }
     
@@ -78,7 +78,7 @@ int main(int argc, char* argv[]) {
     
     // Cleanup
     free_topology_evaluation(eval);
-    stl_free(stl);
+    free_stl(stl);
     
     printf("\nTopology evaluation test completed successfully!\n");
     return 0;

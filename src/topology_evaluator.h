@@ -11,6 +11,7 @@ typedef enum {
     TOPO_ANALYSIS_FEATURES,        // Feature detection (edges, corners)
     TOPO_ANALYSIS_DENSITY,         // Mesh density analysis
     TOPO_ANALYSIS_QUALITY,         // Mesh quality metrics
+    TOPO_ANALYSIS_HOLES,           // Hole detection analysis
     TOPO_ANALYSIS_COMPLETE         // All analyses combined
 } topology_analysis_type_t;
 
@@ -110,6 +111,7 @@ typedef struct {
     density_analysis_t density;    // Density analysis results
     quality_analysis_t quality;    // Quality analysis results
     curvature_analysis_t curvature; // Curvature analysis results
+    hole_detection_t holes;        // Hole detection results
     
     // Connectivity statistics
     unsigned int num_boundary_edges;
@@ -153,6 +155,11 @@ int detect_sharp_edges(const stl_file_t* stl, topology_evaluation_t* eval, float
 int detect_corners(const stl_file_t* stl, topology_evaluation_t* eval, float threshold);
 int detect_flat_regions(const stl_file_t* stl, topology_evaluation_t* eval, float threshold);
 
+// Hole detection functions
+int detect_holes(const stl_file_t* stl, topology_evaluation_t* eval);
+void free_hole_detection(hole_detection_t* holes);
+void print_hole_analysis(const hole_detection_t* holes);
+
 // Analysis and reporting functions
 void print_topology_summary(const topology_evaluation_t* eval);
 void print_connectivity_analysis(const topology_evaluation_t* eval);
@@ -163,12 +170,30 @@ void print_quality_analysis(const topology_evaluation_t* eval);
 void export_topology_report(const topology_evaluation_t* eval, const char* filename);
 
 // Geometry utilities
-float distance_3d(const float* p1, const float* p2);
-float dot_product_3d(const float* v1, const float* v2);
-void cross_product_3d(const float* v1, const float* v2, float* result);
+float calculate_distance_3d(const float* p1, const float* p2);
+float calculate_dot_product_3d(const float* v1, const float* v2);
+void calculate_cross_product_3d(const float* v1, const float* v2, float* result);
 void normalize_vector_3d(float* vector);
-float vector_length_3d(const float* vector);
-float angle_between_vectors(const float* v1, const float* v2);
+float calculate_vector_length_3d(const float* vector);
+float calculate_angle_between_vectors(const float* v1, const float* v2);
+
+// Hole detection structures
+typedef struct {
+    unsigned int* edge_indices;         // Indices of edges in the loop
+    unsigned int num_edges;             // Number of edges in the loop
+    unsigned int* vertex_indices;       // Indices of vertices in the loop
+    unsigned int num_vertices;          // Number of vertices in the loop
+    int is_continuous;                  // Whether the loop is continuous
+    float perimeter;                    // Perimeter of the loop
+} hole_loop_t;
+
+typedef struct {
+    hole_loop_t* loops;                 // Array of detected loops
+    unsigned int num_loops;             // Number of loops found
+    unsigned int* shared_vertices;      // Vertices shared between loops
+    unsigned int num_shared_vertices;   // Number of shared vertices
+    int has_intersecting_loops;         // Whether any loops intersect
+} hole_detection_t;
 
 // Slicing optimization suggestions
 typedef struct {
