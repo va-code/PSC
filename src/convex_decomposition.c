@@ -445,7 +445,7 @@ convex_node_t* convex_node_create_internal(unsigned int node_id, convex_node_t* 
     node->data.internal.right = right;
     
     // Compute bounds from children
-    convex_node_compute_bounds(node);
+    compute_convex_node_bounds(node);
     
     node->concavity = 0.0f;
     return node;
@@ -466,7 +466,7 @@ void convex_node_free(convex_node_t* node) {
     free(node);
 }
 
-void convex_node_compute_bounds(convex_node_t* node) {
+void compute_convex_node_bounds(convex_node_t* node) {
     if (!node || node->type != CONVEX_INTERNAL) return;
     
     convex_node_t* left = node->data.internal.left;
@@ -911,7 +911,7 @@ void print_decomposition_info(const convex_decomposition_t* decomp) {
     printf("\n");
     
     if (decomp->root) {
-        print_node_info(decomp->root, 0);
+        print_convex_node_info(decomp->root, 0);
     }
     
     // Print adjacency information
@@ -932,7 +932,7 @@ void print_decomposition_info(const convex_decomposition_t* decomp) {
     }
 }
 
-void print_node_info(const convex_node_t* node, unsigned int depth) {
+void print_convex_node_info(const convex_node_t* node, unsigned int depth) {
     if (!node) return;
     
     // Print indentation
@@ -957,8 +957,8 @@ void print_node_info(const convex_node_t* node, unsigned int depth) {
     printf(")\n");
     
     if (node->type == CONVEX_INTERNAL) {
-        print_node_info(node->data.internal.left, depth + 1);
-        print_node_info(node->data.internal.right, depth + 1);
+        print_convex_node_info(node->data.internal.left, depth + 1);
+        print_convex_node_info(node->data.internal.right, depth + 1);
     }
 }
 

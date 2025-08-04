@@ -114,7 +114,7 @@ typedef struct {
     float decomposition_quality;   // Quality metric (0.0 to 1.0)
     
     // Adjacency information
-    adjacency_list_t* adjacency_lists; // Array of adjacency lists for each node
+    adjacency_list_t** adjacency_lists; // Array of adjacency lists for each node
     unsigned int num_adjacency_lists;  // Number of adjacency lists
 } convex_decomposition_t;
 
@@ -143,7 +143,7 @@ void compute_convex_node_concavity(convex_node_t* node, const stl_file_t* stl);
 
 // Adjacency operations
 adjacency_list_t* adjacency_list_create(unsigned int node_id, unsigned int initial_capacity);
-void free_adjacency_list(adjacency_list_t* list);
+void adjacency_list_free(adjacency_list_t* list);
 void add_adjacency_list_entry(adjacency_list_t* list, unsigned int adjacent_node_id, 
                              float overlap_volume, float distance);
 void build_adjacency_lists(convex_decomposition_t* decomp);
@@ -194,6 +194,8 @@ void print_convex_decomposition_info(const convex_decomposition_t* decomp);
 void print_convex_part_info(const convex_part_t* part, unsigned int part_index);
 void print_convex_node_info(const convex_node_t* node, unsigned int depth);
 void export_convex_decomposition_to_stl(const convex_decomposition_t* decomp, const char* filename);
+void print_decomposition_info(const convex_decomposition_t* decomp);
+void convex_decomposition_free(convex_decomposition_t* decomp);
 
 // Geometry utilities
 float cross_product_2d(float x1, float y1, float x2, float y2);

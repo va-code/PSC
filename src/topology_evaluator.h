@@ -98,7 +98,25 @@ typedef struct {
     unsigned int num_low_curvature_regions;
 } curvature_analysis_t;
 
-// Complete topology evaluation result
+// Hole detection structures
+typedef struct {
+    unsigned int* edge_indices;         // Indices of edges in the loop
+    unsigned int num_edges;             // Number of edges in the loop
+    unsigned int* vertex_indices;       // Indices of vertices in the loop
+    unsigned int num_vertices;          // Number of vertices in the loop
+    int is_continuous;                  // Whether the loop is continuous
+    float perimeter;                    // Perimeter of the loop
+} hole_loop_t;
+
+typedef struct {
+    hole_loop_t* loops;                 // Array of detected loops
+    unsigned int num_loops;             // Number of loops found
+    unsigned int* shared_vertices;      // Vertices shared between loops
+    unsigned int num_shared_vertices;   // Number of shared vertices
+    int has_intersecting_loops;         // Whether any loops intersect
+} hole_detection_t;
+
+// Main topology evaluation structure
 typedef struct {
     topology_vertex_t* vertices;   // Vertex topology data
     topology_edge_t* edges;        // Edge topology data
@@ -149,6 +167,7 @@ float calculate_dihedral_angle(const stl_triangle_t* tri1, const stl_triangle_t*
                               unsigned int shared_edge);
 float calculate_triangle_quality(const stl_triangle_t* triangle);
 float calculate_triangle_aspect_ratio(const stl_triangle_t* triangle);
+float calculate_triangle_area(const stl_triangle_t* triangle);
 
 // Feature detection functions
 int detect_sharp_edges(const stl_file_t* stl, topology_evaluation_t* eval, float threshold);
@@ -176,24 +195,6 @@ void calculate_cross_product_3d(const float* v1, const float* v2, float* result)
 void normalize_vector_3d(float* vector);
 float calculate_vector_length_3d(const float* vector);
 float calculate_angle_between_vectors(const float* v1, const float* v2);
-
-// Hole detection structures
-typedef struct {
-    unsigned int* edge_indices;         // Indices of edges in the loop
-    unsigned int num_edges;             // Number of edges in the loop
-    unsigned int* vertex_indices;       // Indices of vertices in the loop
-    unsigned int num_vertices;          // Number of vertices in the loop
-    int is_continuous;                  // Whether the loop is continuous
-    float perimeter;                    // Perimeter of the loop
-} hole_loop_t;
-
-typedef struct {
-    hole_loop_t* loops;                 // Array of detected loops
-    unsigned int num_loops;             // Number of loops found
-    unsigned int* shared_vertices;      // Vertices shared between loops
-    unsigned int num_shared_vertices;   // Number of shared vertices
-    int has_intersecting_loops;         // Whether any loops intersect
-} hole_detection_t;
 
 // Slicing optimization suggestions
 typedef struct {

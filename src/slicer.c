@@ -1,6 +1,38 @@
 #include "slicer.h"
-#include <math.h>
+#include "stl_parser.h"
+#include "bvh.h"
+#include "convex_decomposition.h"
+#include <stdlib.h>
 #include <string.h>
+#include <math.h>
+
+// Helper function to collect leaf nodes from convex decomposition
+static void collect_leaf_nodes(convex_node_t* node, convex_part_t** leaf_parts, unsigned int* num_leaf_parts, unsigned int max_leaf_parts) {
+    if (!node || *num_leaf_parts >= max_leaf_parts) return;
+    
+    if (node->type == CONVEX_LEAF && node->data.leaf.part) {
+        leaf_parts[*num_leaf_parts] = node->data.leaf.part;
+        (*num_leaf_parts)++;
+    } else if (node->type == CONVEX_INTERNAL) {
+        collect_leaf_nodes(node->data.internal.left, leaf_parts, num_leaf_parts, max_leaf_parts);
+        collect_leaf_nodes(node->data.internal.right, leaf_parts, num_leaf_parts, max_leaf_parts);
+    }
+}
+
+// Helper function to get leaf parts from convex decomposition
+static convex_part_t** get_leaf_parts(const convex_decomposition_t* decomp, unsigned int* num_leaf_parts) {
+    if (!decomp || !decomp->root) {
+        *num_leaf_parts = 0;
+        return NULL;
+    }
+    
+    convex_part_t** leaf_parts = malloc(decomp->num_leaf_nodes * sizeof(convex_part_t*));
+    *num_leaf_parts = 0;
+    
+    collect_leaf_nodes(decomp->root, leaf_parts, num_leaf_parts, decomp->num_leaf_nodes);
+    
+    return leaf_parts;
+}
 
 sliced_model_t* slice_model(const stl_file_t* stl, const slicing_params_t* params) {
     if (!stl || !params) return NULL;
@@ -157,10 +189,18 @@ sliced_model_t* slice_model_with_convex_decomposition(const stl_file_t* stl, con
     
     // Generate contours and infill for each layer using convex parts
     for (int i = 0; i < model->num_layers; i++) {
+        // Get leaf parts from the hierarchical decomposition
+        unsigned int num_leaf_parts;
+        convex_part_t** leaf_parts = get_leaf_parts(decomp, &num_leaf_parts);
+        
         // Generate contours for each convex part
-        for (unsigned int part_id = 0; part_id < decomp->num_parts; part_id++) {
-            generate_contours_with_convex_parts(&model->layers[i], stl, decomp, model->layers[i].z_height, part_id);
+        for (unsigned int part_id = 0; part_id < num_leaf_parts; part_id++) {
+            generate_contours_with_convex_parts(&model->layers[i], stl, leaf_parts[part_id], model->layers[i].z_height, part_id);
         }
+        
+        // Free the leaf parts array
+        free(leaf_parts);
+        
         generate_infill(&model->layers[i], params);
     }
     
@@ -224,12 +264,9 @@ void generate_contours_with_bvh(layer_t* layer, const stl_file_t* stl, const spa
     new_contour->points[3] = (point2d_t){min_x - margin, max_y + margin};
 }
 
-void generate_contours_with_convex_parts(layer_t* layer, const stl_file_t* stl, const convex_decomposition_t* decomp,
+void generate_contours_with_convex_parts(layer_t* layer, const stl_file_t* stl, const convex_part_t* part,
                                         float z_height, unsigned int part_id) {
-    if (!layer || !stl || !decomp || part_id >= decomp->num_parts) return;
-    
-    const convex_part_t* part = decomp->parts[part_id];
-    if (!part || part->num_triangles == 0) return;
+    if (!layer || !stl || !part || part->num_triangles == 0) return;
     
     // Check if this Z height intersects with the part
     if (z_height < part->hull.bounds[2] || z_height > part->hull.bounds[5]) return;

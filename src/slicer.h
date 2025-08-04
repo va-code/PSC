@@ -55,7 +55,7 @@ int calculate_num_layers(const stl_file_t* stl, float layer_height);
 void generate_contours(layer_t* layer, const stl_file_t* stl, float z_height);
 void generate_contours_with_bvh(layer_t* layer, const stl_file_t* stl, const spatial_partition_t* partition, 
                                float z_height, unsigned int partition_id);
-void generate_contours_with_convex_parts(layer_t* layer, const stl_file_t* stl, const convex_decomposition_t* decomp,
+void generate_contours_with_convex_parts(layer_t* layer, const stl_file_t* stl, const convex_part_t* part,
                                         float z_height, unsigned int part_id);
 void generate_infill(layer_t* layer, const slicing_params_t* params);
 void print_slicing_info(const sliced_model_t* model);

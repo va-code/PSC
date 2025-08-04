@@ -27,5 +27,7 @@ int parse_stl_ascii(FILE* file, stl_file_t* stl);
 int parse_stl_binary(FILE* file, stl_file_t* stl);
 void calculate_stl_bounds(stl_file_t* stl);
 void print_stl_info(const stl_file_t* stl);
+void stl_print_info(const stl_file_t* stl);
+void stl_free(stl_file_t* stl);
 
 #endif // STL_PARSER_H 

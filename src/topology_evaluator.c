@@ -6,6 +6,10 @@
 #include <float.h>
 #include <stdbool.h>
 
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
 // Main evaluation functions
 topology_evaluation_t* evaluate_topology(const stl_file_t* stl, topology_analysis_type_t analysis_type) {
     if (!stl || stl->num_triangles == 0) return NULL;
@@ -165,7 +169,7 @@ int analyze_connectivity(const stl_file_t* stl, topology_evaluation_t* eval) {
         for (int j = 0; j < 3; j++) {
             // Find vertex index in our unique vertex list
             for (unsigned int k = 0; k < eval->num_vertices; k++) {
-                if (distance_3d(tri->vertices[j], eval->vertices[k].position) < tolerance) {
+                if (calculate_distance_3d(tri->vertices[j], eval->vertices[k].position) < tolerance) {
                     eval->triangles[i].vertices[j] = k;
                     eval->vertices[k].valence++;
                     break;
@@ -372,7 +376,7 @@ unsigned int find_unique_vertices(const stl_file_t* stl, topology_vertex_t* vert
             
             // Check if this vertex already exists
             for (unsigned int k = 0; k < unique_count; k++) {
-                if (distance_3d(tri->vertices[j], vertices[k].position) < tolerance) {
+                if (calculate_distance_3d(tri->vertices[j], vertices[k].position) < tolerance) {
                     found = 1;
                     break;
                 }
@@ -412,7 +416,7 @@ unsigned int build_edge_list(const stl_file_t* stl, topology_evaluation_t* eval)
             unsigned int vertex1_idx = 0, vertex2_idx = 0;
             
             for (unsigned int k = 0; k < eval->num_vertices; k++) {
-                if (distance_3d(tri->vertices[v1_idx], eval->vertices[k].position) < tolerance) {
+                if (calculate_distance_3d(tri->vertices[v1_idx], eval->vertices[k].position) < tolerance) {
                     vertex1_idx = k;
                 }
                 if (distance_3d(tri->vertices[v2_idx], eval->vertices[k].position) < tolerance) {
@@ -470,14 +474,14 @@ unsigned int build_edge_list(const stl_file_t* stl, topology_evaluation_t* eval)
 }
 
 // Geometry utility functions
-float distance_3d(const float* p1, const float* p2) {
+float calculate_distance_3d(const float* p1, const float* p2) {
     float dx = p2[0] - p1[0];
     float dy = p2[1] - p1[1];
     float dz = p2[2] - p1[2];
     return sqrtf(dx * dx + dy * dy + dz * dz);
 }
 
-float dot_product_3d(const float* v1, const float* v2) {
+float dot_product_3d_vectors(const float* v1, const float* v2) {
     return v1[0] * v2[0] + v1[1] * v2[1] + v1[2] * v2[2];
 }
 
@@ -488,7 +492,7 @@ void cross_product_3d(const float* v1, const float* v2, float* result) {
 }
 
 void normalize_vector_3d(float* vector) {
-    float length = vector_length_3d(vector);
+    float length = calculate_vector_length_3d(vector);
     if (length > 0.0f) {
         vector[0] /= length;
         vector[1] /= length;
@@ -496,14 +500,14 @@ void normalize_vector_3d(float* vector) {
     }
 }
 
-float vector_length_3d(const float* vector) {
+float calculate_vector_length_3d(const float* vector) {
     return sqrtf(vector[0] * vector[0] + vector[1] * vector[1] + vector[2] * vector[2]);
 }
 
 float angle_between_vectors(const float* v1, const float* v2) {
-    float dot = dot_product_3d(v1, v2);
-    float len1 = vector_length_3d(v1);
-    float len2 = vector_length_3d(v2);
+    float dot = dot_product_3d_vectors(v1, v2);
+    float len1 = calculate_vector_length_3d(v1);
+    float len2 = calculate_vector_length_3d(v2);
     
     if (len1 > 0.0f && len2 > 0.0f) {
         float cos_angle = dot / (len1 * len2);
@@ -539,7 +543,7 @@ float calculate_vertex_curvature(const stl_file_t* stl, unsigned int vertex_idx,
                 cross_product_3d(v1, v2, normal);
                 normalize_vector_3d(normal);
                 
-                total_curvature += vector_length_3d(normal);
+                total_curvature += calculate_vector_length_3d(normal);
                 face_count++;
                 break;
             }
@@ -665,7 +669,7 @@ float calculate_triangle_area(const stl_triangle_t* triangle) {
     }
     
     cross_product_3d(v1, v2, cross);
-    return vector_length_3d(cross) / 2.0f;
+    return calculate_vector_length_3d(cross) / 2.0f;
 }
 
 // Feature detection functions

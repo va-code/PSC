@@ -67,7 +67,7 @@ void calculate_bvh_bounds(bvh_node_t* node, const stl_file_t* stl);
 void sort_triangles_by_axis(unsigned int* triangle_indices, unsigned int num_triangles,
                                 const stl_file_t* stl, sort_axis_t sort_axis);
 float get_center_coordinate(const stl_triangle_t* triangle, sort_axis_t axis);
-int compare_triangles(const void* a, const void* b, void* arg);
+int compare_triangles(const void* a, const void* b);
 
 // Spatial partitioning functions
 spatial_partition_t* spatial_partition_create(const stl_file_t* stl, unsigned int num_partitions,
@@ -76,6 +76,8 @@ void free_spatial_partition(spatial_partition_t* partition);
 unsigned int* spatial_partition_get_triangles_in_region(const spatial_partition_t* partition,
                                                         float bounds[6], unsigned int* num_triangles);
 void print_spatial_partition_info(const spatial_partition_t* partition);
+void spatial_partition_print_info(const spatial_partition_t* partition);
+void spatial_partition_free(spatial_partition_t* partition);
 
 // Utility functions
 void print_bvh_tree(const bvh_tree_t* bvh, int depth);

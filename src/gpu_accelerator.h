@@ -107,6 +107,10 @@ void cleanup_gpu(gpu_context_t* ctx);
 int is_gpu_available(const gpu_context_t* ctx);
 gpu_capabilities_t get_gpu_capabilities(const gpu_context_t* ctx);
 void print_gpu_capabilities(const gpu_capabilities_t* caps);
+int gpu_is_available(const gpu_context_t* ctx);
+gpu_capabilities_t gpu_get_capabilities(const gpu_context_t* ctx);
+void gpu_print_capabilities(const gpu_capabilities_t* caps);
+void gpu_cleanup(gpu_context_t* ctx);
 
 // GPU buffer management
 gpu_buffer_t* gpu_create_buffer(size_t size, const void* data);
@@ -121,12 +125,17 @@ void destroy_gpu_program(gpu_program_t* program);
 int use_gpu_program(gpu_program_t* program);
 int dispatch_gpu_compute(unsigned int num_groups_x, unsigned int num_groups_y, unsigned int num_groups_z);
 
-// GPU-accelerated topology evaluation
+// GPU-accelerated topology analysis
 int analyze_gpu_connectivity(const stl_file_t* stl, topology_evaluation_t* eval, gpu_context_t* ctx);
 int analyze_gpu_curvature(const stl_file_t* stl, topology_evaluation_t* eval, gpu_context_t* ctx);
 int analyze_gpu_features(const stl_file_t* stl, topology_evaluation_t* eval, gpu_context_t* ctx);
 int analyze_gpu_density(const stl_file_t* stl, topology_evaluation_t* eval, gpu_context_t* ctx);
 int analyze_gpu_quality(const stl_file_t* stl, topology_evaluation_t* eval, gpu_context_t* ctx);
+int gpu_analyze_connectivity(const stl_file_t* stl, topology_evaluation_t* eval, gpu_context_t* ctx);
+int gpu_analyze_curvature(const stl_file_t* stl, topology_evaluation_t* eval, gpu_context_t* ctx);
+int gpu_analyze_features(const stl_file_t* stl, topology_evaluation_t* eval, gpu_context_t* ctx);
+int gpu_analyze_density(const stl_file_t* stl, topology_evaluation_t* eval, gpu_context_t* ctx);
+int gpu_analyze_quality(const stl_file_t* stl, topology_evaluation_t* eval, gpu_context_t* ctx);
 
 // GPU-accelerated convex decomposition
 int compute_gpu_convex_hull(const point3d_t* points, unsigned int num_points, 

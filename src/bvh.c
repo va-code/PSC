@@ -1,4 +1,5 @@
 #include "bvh.h"
+#include <float.h>
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
@@ -11,6 +12,9 @@ typedef struct {
     const stl_file_t* stl;
     sort_axis_t sort_axis;
 } sort_context_t;
+
+// Global context for sorting (not thread-safe, but works for our use case)
+static sort_context_t g_sort_context;
 //takes a pointer to a sorted stl and a max number of triangles to be included in the final nodes.
 bvh_tree_t* bvh_create(const stl_file_t* stl, unsigned int max_triangles_per_leaf) {
     if (!stl || stl->num_triangles == 0) return NULL;
@@ -50,7 +54,7 @@ void free_bvh(bvh_tree_t* bvh) {
     if (!bvh) return;
     
     if (bvh->root) {
-        bvh_free_node(bvh->root);
+        free_bvh_node(bvh->root);
     }
     free(bvh);
 }
@@ -180,8 +184,9 @@ void sort_triangles_by_axis(unsigned int* triangle_indices, unsigned int num_tri
                                 const stl_file_t* stl, sort_axis_t sort_axis) {
     if (!triangle_indices || !stl || num_triangles == 0) return;
     
-    sort_context_t context = {stl, sort_axis};
-    qsort_r(triangle_indices, num_triangles, sizeof(unsigned int), compare_triangles, &context);
+    g_sort_context.stl = stl;
+    g_sort_context.sort_axis = sort_axis;
+    qsort(triangle_indices, num_triangles, sizeof(unsigned int), compare_triangles);
 }
 
 float get_center_coordinate(const stl_triangle_t* triangle, sort_axis_t axis) {
@@ -209,16 +214,18 @@ float get_center_coordinate(const stl_triangle_t* triangle, sort_axis_t axis) {
     }
 }
 
-int compare_triangles(const void* a, const void* b, void* arg) {
-    sort_context_t* context = (sort_context_t*)arg;
+// Global context for sorting (not thread-safe, but works for our use case)
+static sort_context_t g_sort_context;
+
+int compare_triangles(const void* a, const void* b) {
     unsigned int idx_a = *(unsigned int*)a;
     unsigned int idx_b = *(unsigned int*)b;
     
-    const stl_triangle_t* triangle_a = &context->stl->triangles[idx_a];
-    const stl_triangle_t* triangle_b = &context->stl->triangles[idx_b];
+    const stl_triangle_t* triangle_a = &g_sort_context.stl->triangles[idx_a];
+    const stl_triangle_t* triangle_b = &g_sort_context.stl->triangles[idx_b];
     
-    float coord_a = get_center_coordinate(triangle_a, context->sort_axis);
-    float coord_b = get_center_coordinate(triangle_b, context->sort_axis);
+    float coord_a = get_center_coordinate(triangle_a, g_sort_context.sort_axis);
+    float coord_b = get_center_coordinate(triangle_b, g_sort_context.sort_axis);
     
     if (coord_a < coord_b) return -1;
     if (coord_a > coord_b) return 1;
@@ -332,7 +339,7 @@ void print_bvh_tree(const bvh_tree_t* bvh, int depth) {
     
     printf("BVH Tree (max depth: %u, max triangles per leaf: %u):\n", 
            bvh->max_depth, bvh->max_triangles_per_leaf);
-    bvh_print_node(bvh->root, 0);
+    print_bvh_node(bvh->root, 0);
 }
 
 void print_bvh_node(const bvh_node_t* node, int depth) {
@@ -355,8 +362,8 @@ void print_bvh_node(const bvh_node_t* node, int depth) {
                node->bounds[1], node->bounds[4],
                node->bounds[2], node->bounds[5]);
         
-        bvh_print_node(node->data.internal.left, depth + 1);
-        bvh_print_node(node->data.internal.right, depth + 1);
+        print_bvh_node(node->data.internal.left, depth + 1);
+        print_bvh_node(node->data.internal.right, depth + 1);
     }
 }
 
@@ -372,4 +379,12 @@ int intersects_bounds(const float bounds1[6], const float bounds2[6]) {
     return (bounds1[0] <= bounds2[3] && bounds1[3] >= bounds2[0] &&
             bounds1[1] <= bounds2[4] && bounds1[4] >= bounds2[1] &&
             bounds1[2] <= bounds2[5] && bounds1[5] >= bounds2[2]);
+}
+
+void spatial_partition_free(spatial_partition_t* partition) {
+    free_spatial_partition(partition);
+}
+
+void spatial_partition_print_info(const spatial_partition_t* partition) {
+    print_spatial_partition_info(partition);
 } 

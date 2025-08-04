@@ -1,4 +1,5 @@
 #include "stl_parser.h"
+#include <float.h>
 
 stl_file_t* stl_load_file(const char* filename) {
     FILE* file = fopen(filename, "rb");
@@ -170,4 +171,12 @@ void print_stl_info(const stl_file_t* stl) {
            stl->bounds[1], stl->bounds[4], stl->bounds[4] - stl->bounds[1]);
     printf("  Z: %.3f to %.3f (height: %.3f)\n", 
            stl->bounds[2], stl->bounds[5], stl->bounds[5] - stl->bounds[2]);
+}
+
+void stl_print_info(const stl_file_t* stl) {
+    print_stl_info(stl);
+}
+
+void stl_free(stl_file_t* stl) {
+    free_stl(stl);
 } 

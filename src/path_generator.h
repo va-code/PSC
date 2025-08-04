@@ -45,5 +45,6 @@ void add_temperature_command(path_generator_t* generator, float temp);
 void add_fan_command(path_generator_t* generator, int fan_speed);
 void add_home_command(path_generator_t* generator);
 void add_end_command(path_generator_t* generator);
+void path_generator_free(path_generator_t* generator);
 
 #endif // PATH_GENERATOR_H 
