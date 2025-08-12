@@ -2,44 +2,51 @@ CC = gcc
 CFLAGS = -Wall -Wextra -std=c99 -O2 -g -I./src
 LDFLAGS = -lm
 
+# Directories
+BUILD_DIR = build
+TEST_DIR = tests
+
 # Source files
 SRCS = src/main.c src/stl_parser.c src/slicer.c src/path_generator.c src/bvh.c src/convex_decomposition.c src/topology_evaluator.c
-OBJS = $(SRCS:.c=.o)
+OBJS = $(patsubst src/%.c,$(BUILD_DIR)/%.o,$(SRCS))
 
 # Test programs
-TEST_SRCS = PSC_tests.c
-TEST_OBJS = $(TEST_SRCS:.c=.o)
-TEST_TARGET = PSC_tests
+TEST_SRCS = $(TEST_DIR)/PSC_tests.c
+TEST_OBJS = $(patsubst $(TEST_DIR)/%.c,$(BUILD_DIR)/%.o,$(TEST_SRCS))
+TEST_TARGET = $(BUILD_DIR)/PSC_tests
 
 # Target executable
-TARGET = parametric_slicer
+TARGET = $(BUILD_DIR)/parametric_slicer
 
 # Default target
-all: run_tests
-
-# Build everything
-build: $(TARGET) $(TEST_TARGET)
-
-# Run tests automatically after build
-run_tests: build
+all: $(TARGET) $(TEST_TARGET)
 	@echo "\nRunning tests..."
-	./$(TEST_TARGET) A.stl
+	$(TEST_TARGET) A.stl
+
+# Create build directory
+$(BUILD_DIR):
+	mkdir -p $(BUILD_DIR)
 
 # Build the executable
-$(TARGET): $(OBJS)
-	$(CC) $(OBJS) -o $(TARGET) $(LDFLAGS)
+$(TARGET): $(OBJS) | $(BUILD_DIR)
+	$(CC) $(OBJS) -o $@ $(LDFLAGS)
 
 # Build test program
-$(TEST_TARGET): $(TEST_OBJS) src/stl_parser.o src/topology_evaluator.o src/bvh.o src/convex_decomposition.o
+$(TEST_TARGET): $(TEST_OBJS) $(BUILD_DIR)/stl_parser.o $(BUILD_DIR)/topology_evaluator.o $(BUILD_DIR)/bvh.o $(BUILD_DIR)/convex_decomposition.o | $(BUILD_DIR)
 	$(CC) $^ -o $@ $(LDFLAGS)
 
 # Compile source files
-%.o: %.c
+$(BUILD_DIR)/%.o: src/%.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# Compile test files
+$(BUILD_DIR)/%.o: $(TEST_DIR)/%.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # Clean build files
 clean:
-	rm -f $(OBJS) $(TEST_OBJS) $(TARGET) $(TEST_TARGET) PSC_tests_log.txt
+	rm -rf $(BUILD_DIR)
+	rm -f PSC_tests_log.txt
 
 # Install dependencies (for development)
 install-deps:
@@ -50,10 +57,10 @@ install-deps:
 
 # Run the program
 run: $(TARGET)
-	./$(TARGET)
+	$(TARGET)
 
 # Run tests
 test: $(TEST_TARGET)
-	./$(TEST_TARGET) A.stl
+	$(TEST_TARGET) A.stl
 
-.PHONY: all clean install-deps run test build run_tests 
+.PHONY: all clean install-deps run test

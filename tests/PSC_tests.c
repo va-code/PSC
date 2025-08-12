@@ -4,10 +4,10 @@
 #include <time.h>
 #include <assert.h>
 #include <limits.h>
-#include "src/stl_parser.h"
-#include "src/topology_evaluator.h"
-#include "src/convex_decomposition.h"
-#include "src/bvh.h"
+#include "../src/stl_parser.h"
+#include "../src/topology_evaluator.h"
+#include "../src/convex_decomposition.h"
+#include "../src/bvh.h"
 
 // Helper function to validate vertex data
 void validate_vertex_data(FILE* log_file, const topology_vertex_t* vertex, unsigned int vertex_idx) {
@@ -188,7 +188,7 @@ int main(int argc, char* argv[]) {
     }
     
     char* stl_file = argv[1];
-    FILE* log_file = fopen("PSC_tests_log.txt", "w");
+    FILE* log_file = fopen("build/PSC_tests_log.txt", "w");
     if (!log_file) {
         printf("Error: Could not open log file for writing\n");
         return 1;
