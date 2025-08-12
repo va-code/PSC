@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <float.h>
 #include <stdbool.h>
+#include <limits.h>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -30,9 +31,18 @@ topology_evaluation_t* evaluate_topology(const stl_file_t* stl, topology_analysi
     
     // Initialize vertices
     for (unsigned int i = 0; i < eval->num_vertices; i++) {
-        eval->vertices[i].connected_vertices = NULL;
+        eval->vertices[i].connected_vertices = malloc(10 * sizeof(unsigned int)); // Start with space for 10 connections
+        if (!eval->vertices[i].connected_vertices) {
+            // Cleanup on failure
+            for (unsigned int j = 0; j < i; j++) {
+                free(eval->vertices[j].connected_vertices);
+            }
+            free(eval->vertices);
+            free(eval);
+            return NULL;
+        }
         eval->vertices[i].num_connections = 0;
-        eval->vertices[i].capacity = 0;
+        eval->vertices[i].capacity = 10;
         eval->vertices[i].curvature = 0.0f;
         eval->vertices[i].valence = 0;
     }
@@ -68,8 +78,8 @@ topology_evaluation_t* evaluate_topology(const stl_file_t* stl, topology_analysi
         eval->triangles[i].curvature = 0.0f;
         eval->triangles[i].aspect_ratio = 0.0f;
         for (int j = 0; j < 3; j++) {
-            eval->triangles[i].vertices[j] = 0;
-            eval->triangles[i].edges[j] = 0;
+            eval->triangles[i].vertices[j] = UINT_MAX; // Use UINT_MAX as sentinel value
+            eval->triangles[i].edges[j] = UINT_MAX;    // Use UINT_MAX as sentinel value
             eval->triangles[i].normal[j] = 0.0f;
         }
     }
@@ -167,6 +177,9 @@ int analyze_connectivity(const stl_file_t* stl, topology_evaluation_t* eval) {
         const stl_triangle_t* tri = &stl->triangles[i];
         
         for (int j = 0; j < 3; j++) {
+            // Initialize vertex index to sentinel value
+            eval->triangles[i].vertices[j] = UINT_MAX;
+            
             // Find vertex index in our unique vertex list
             for (unsigned int k = 0; k < eval->num_vertices; k++) {
                 if (calculate_distance_3d(tri->vertices[j], eval->vertices[k].position) < tolerance) {
@@ -174,6 +187,12 @@ int analyze_connectivity(const stl_file_t* stl, topology_evaluation_t* eval) {
                     eval->vertices[k].valence++;
                     break;
                 }
+            }
+            
+            // Verify we found a matching vertex
+            if (eval->triangles[i].vertices[j] == UINT_MAX) {
+                fprintf(stderr, "Error: Could not find matching vertex for triangle %u vertex %d\n", i, j);
+                return 0;
             }
         }
     }
@@ -385,8 +404,7 @@ unsigned int find_unique_vertices(const stl_file_t* stl, topology_vertex_t* vert
             if (!found) {
                 // Add new vertex
                 memcpy(vertices[unique_count].position, tri->vertices[j], 3 * sizeof(float));
-                vertices[unique_count].connected_vertices = malloc(10 * sizeof(unsigned int));
-                vertices[unique_count].capacity = 10;
+                // Note: connected_vertices array is already allocated in evaluate_topology
                 vertices[unique_count].num_connections = 0;
                 vertices[unique_count].curvature = 0.0f;
                 vertices[unique_count].valence = 0;
@@ -419,7 +437,7 @@ unsigned int build_edge_list(const stl_file_t* stl, topology_evaluation_t* eval)
                 if (calculate_distance_3d(tri->vertices[v1_idx], eval->vertices[k].position) < tolerance) {
                     vertex1_idx = k;
                 }
-                if (distance_3d(tri->vertices[v2_idx], eval->vertices[k].position) < tolerance) {
+                if (calculate_distance_3d(tri->vertices[v2_idx], eval->vertices[k].position) < tolerance) {
                     vertex2_idx = k;
                 }
             }
@@ -442,8 +460,8 @@ unsigned int build_edge_list(const stl_file_t* stl, topology_evaluation_t* eval)
                 eval->edges[edge_count].vertex1 = vertex1_idx;
                 eval->edges[edge_count].vertex2 = vertex2_idx;
                 eval->edges[edge_count].triangle1 = i;
-                eval->edges[edge_count].triangle2 = -1; // Will be set if another triangle shares this edge
-                eval->edges[edge_count].length = distance_3d(tri->vertices[v1_idx], tri->vertices[v2_idx]);
+                eval->edges[edge_count].triangle2 = UINT_MAX; // Will be set if another triangle shares this edge
+                eval->edges[edge_count].length = calculate_distance_3d(tri->vertices[v1_idx], tri->vertices[v2_idx]);
                 eval->edges[edge_count].dihedral_angle = 0.0f; // Will be calculated later
                 eval->edges[edge_count].is_boundary = 1; // Will be updated if shared
                 
@@ -460,7 +478,7 @@ unsigned int build_edge_list(const stl_file_t* stl, topology_evaluation_t* eval)
     
     // Update boundary flags and calculate dihedral angles
     for (unsigned int i = 0; i < edge_count; i++) {
-        if (eval->edges[i].triangle2 != -1) {
+        if (eval->edges[i].triangle2 != UINT_MAX) {
             eval->edges[i].is_boundary = 0; // Not a boundary edge
             
             // Calculate dihedral angle
@@ -533,7 +551,7 @@ float calculate_vertex_curvature(const stl_file_t* stl, unsigned int vertex_idx,
         float tolerance = 1e-6f;
         
         for (int j = 0; j < 3; j++) {
-            if (distance_3d(tri->vertices[j], eval->vertices[vertex_idx].position) < tolerance) {
+            if (calculate_distance_3d(tri->vertices[j], eval->vertices[vertex_idx].position) < tolerance) {
                 // Calculate face normal
                 float v1[3], v2[3], normal[3];
                 for (int k = 0; k < 3; k++) {
@@ -558,7 +576,7 @@ float calculate_vertex_curvature(const stl_file_t* stl, unsigned int vertex_idx,
 }
 
 float calculate_triangle_curvature(const stl_triangle_t* triangle, 
-                                  const topology_evaluation_t* eval) {
+                                  const topology_evaluation_t* eval __attribute__((unused))) {
     // Simplified triangle curvature based on area and perimeter
     if (!triangle) return 0.0f;
     
@@ -567,7 +585,7 @@ float calculate_triangle_curvature(const stl_triangle_t* triangle,
     
     for (int i = 0; i < 3; i++) {
         int j = (i + 1) % 3;
-        perimeter += distance_3d(triangle->vertices[i], triangle->vertices[j]);
+        perimeter += calculate_distance_3d(triangle->vertices[i], triangle->vertices[j]);
     }
     
     if (perimeter > 0.0f) {
@@ -578,7 +596,7 @@ float calculate_triangle_curvature(const stl_triangle_t* triangle,
 }
 
 float calculate_dihedral_angle(const stl_triangle_t* tri1, const stl_triangle_t* tri2, 
-                              unsigned int shared_edge) {
+                              unsigned int shared_edge __attribute__((unused))) {
     // Calculate angle between two adjacent faces
     if (!tri1 || !tri2) return 0.0f;
     
@@ -640,7 +658,7 @@ float calculate_triangle_aspect_ratio(const stl_triangle_t* triangle) {
     float edges[3];
     for (int i = 0; i < 3; i++) {
         int j = (i + 1) % 3;
-        edges[i] = distance_3d(triangle->vertices[i], triangle->vertices[j]);
+        edges[i] = calculate_distance_3d(triangle->vertices[i], triangle->vertices[j]);
     }
     
     // Find min and max edge lengths
@@ -905,10 +923,10 @@ static void find_connected_triangles(const topology_evaluation_t* eval,
         for (int j = 0; j < 3; j++) {
             if (i == edges[j]) {
                 // This edge belongs to our triangle
-                if (eval->edges[i].triangle1 == triangle_idx && eval->edges[i].triangle2 != -1) {
+                if (eval->edges[i].triangle1 == triangle_idx && eval->edges[i].triangle2 != UINT_MAX) {
                     connected_tris[*num_connected] = eval->edges[i].triangle2;
                     (*num_connected)++;
-                } else if (eval->edges[i].triangle2 == triangle_idx && eval->edges[i].triangle1 != -1) {
+                } else if (eval->edges[i].triangle2 == triangle_idx) {
                     connected_tris[*num_connected] = eval->edges[i].triangle1;
                     (*num_connected)++;
                 }
@@ -954,7 +972,7 @@ static float calculate_loop_perimeter(const hole_loop_t* loop, const topology_ev
 
 // Helper function to check if loops share vertices
 static void find_shared_vertices(const hole_detection_t* holes, 
-                                const topology_evaluation_t* eval,
+                                const topology_evaluation_t* eval __attribute__((unused)),
                                 unsigned int* shared_vertices, 
                                 unsigned int* num_shared) {
     *num_shared = 0;
@@ -1012,6 +1030,14 @@ int detect_holes(const stl_file_t* stl, topology_evaluation_t* eval) {
     // Allocate arrays for storing edges in loops
     unsigned int max_edges_per_loop = eval->num_edges;
     for (unsigned int i = 0; i < max_loops; i++) {
+        eval->holes.loops[i].edge_indices = NULL;
+        eval->holes.loops[i].vertex_indices = NULL;
+        eval->holes.loops[i].num_edges = 0;
+        eval->holes.loops[i].num_vertices = 0;
+        eval->holes.loops[i].is_continuous = 0;
+        eval->holes.loops[i].perimeter = 0.0f;
+        
+        // Allocate memory for all potential loops
         eval->holes.loops[i].edge_indices = malloc(max_edges_per_loop * sizeof(unsigned int));
         eval->holes.loops[i].vertex_indices = malloc(max_edges_per_loop * sizeof(unsigned int));
         if (!eval->holes.loops[i].edge_indices || !eval->holes.loops[i].vertex_indices) {
@@ -1024,10 +1050,6 @@ int detect_holes(const stl_file_t* stl, topology_evaluation_t* eval) {
             free(visited);
             return 0;
         }
-        eval->holes.loops[i].num_edges = 0;
-        eval->holes.loops[i].num_vertices = 0;
-        eval->holes.loops[i].is_continuous = 0;
-        eval->holes.loops[i].perimeter = 0.0f;
     }
     
     // Start from each unvisited triangle
@@ -1165,13 +1187,22 @@ int detect_holes(const stl_file_t* stl, topology_evaluation_t* eval) {
     // Find shared vertices between loops
     if (eval->holes.num_loops > 0) {
         eval->holes.shared_vertices = malloc(eval->num_vertices * sizeof(unsigned int));
-        if (eval->holes.shared_vertices) {
-            find_shared_vertices(&eval->holes, eval, 
-                                eval->holes.shared_vertices, 
-                                &eval->holes.num_shared_vertices);
-            
-            eval->holes.has_intersecting_loops = (eval->holes.num_shared_vertices > 0);
+        if (!eval->holes.shared_vertices) {
+            // Cleanup on failure
+            for (unsigned int i = 0; i < max_loops; i++) {
+                free(eval->holes.loops[i].edge_indices);
+                free(eval->holes.loops[i].vertex_indices);
+            }
+            free(eval->holes.loops);
+            free(visited);
+            return 0;
         }
+        
+        find_shared_vertices(&eval->holes, eval, 
+                            eval->holes.shared_vertices, 
+                            &eval->holes.num_shared_vertices);
+        
+        eval->holes.has_intersecting_loops = (eval->holes.num_shared_vertices > 0);
     }
     
     free(visited);

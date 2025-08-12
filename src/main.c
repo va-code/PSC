@@ -7,7 +7,7 @@
 #include "bvh.h"
 #include "convex_decomposition.h"
 #include "topology_evaluator.h"
-#include "gpu_accelerator.h"
+
 
 void print_usage(const char* program_name) {
     printf("Parametric Slicer - 3D Path Generation Tool\n");
@@ -54,28 +54,44 @@ void interactive_input(slicing_params_t* params) {
     printf("\n=== Interactive Parameter Input ===\n");
     
     printf("Layer height (mm) [%.2f]: ", params->layer_height);
-    scanf("%f", &params->layer_height);
+    if (scanf("%f", &params->layer_height) != 1) {
+        params->layer_height = 0.2f; // Default value
+    }
     
     printf("Infill density (0.0-1.0) [%.2f]: ", params->infill_density);
-    scanf("%f", &params->infill_density);
+    if (scanf("%f", &params->infill_density) != 1) {
+        params->infill_density = 0.2f;
+    }
     
     printf("Shell thickness (mm) [%.2f]: ", params->shell_thickness);
-    scanf("%f", &params->shell_thickness);
+    if (scanf("%f", &params->shell_thickness) != 1) {
+        params->shell_thickness = 0.4f;
+    }
     
     printf("Number of shell layers [%d]: ", params->num_shells);
-    scanf("%d", &params->num_shells);
+    if (scanf("%d", &params->num_shells) != 1) {
+        params->num_shells = 2;
+    }
     
     printf("Print speed (mm/s) [%.1f]: ", params->print_speed);
-    scanf("%f", &params->print_speed);
+    if (scanf("%f", &params->print_speed) != 1) {
+        params->print_speed = 60.0f;
+    }
     
     printf("Travel speed (mm/s) [%.1f]: ", params->travel_speed);
-    scanf("%f", &params->travel_speed);
+    if (scanf("%f", &params->travel_speed) != 1) {
+        params->travel_speed = 120.0f;
+    }
     
     printf("Nozzle diameter (mm) [%.2f]: ", params->nozzle_diameter);
-    scanf("%f", &params->nozzle_diameter);
+    if (scanf("%f", &params->nozzle_diameter) != 1) {
+        params->nozzle_diameter = 0.4f;
+    }
     
     printf("Filament diameter (mm) [%.2f]: ", params->filament_diameter);
-    scanf("%f", &params->filament_diameter);
+    if (scanf("%f", &params->filament_diameter) != 1) {
+        params->filament_diameter = 1.75f;
+    }
     
     printf("\n");
 }
@@ -119,8 +135,7 @@ int main(int argc, char* argv[]) {
     float concavity_tolerance = 0.1f;
     int use_topology_analysis = 0;
     topology_analysis_type_t topology_type = TOPO_ANALYSIS_COMPLETE;
-    gpu_mode_t gpu_mode = GPU_MODE_AUTO;
-    gpu_context_t* gpu_ctx = NULL;
+
     
     // Parse command line arguments
     for (int i = 2; i < argc; i++) {
@@ -160,16 +175,7 @@ int main(int argc, char* argv[]) {
                 fprintf(stderr, "Error: Invalid sort axis '%s'. Use x, y, z, xy, xz, yz, or xyz\n", axis_str);
                 return 1;
             }
-        } else if (strcmp(argv[i], "--gpu") == 0 && i + 1 < argc) {
-            char* gpu_mode_str = argv[++i];
-            if (strcmp(gpu_mode_str, "cpu") == 0) gpu_mode = GPU_MODE_CPU_ONLY;
-            else if (strcmp(gpu_mode_str, "gpu") == 0) gpu_mode = GPU_MODE_GPU_ONLY;
-            else if (strcmp(gpu_mode_str, "auto") == 0) gpu_mode = GPU_MODE_AUTO;
-            else if (strcmp(gpu_mode_str, "preferred") == 0) gpu_mode = GPU_MODE_GPU_PREFERRED;
-            else {
-                fprintf(stderr, "Error: Invalid GPU mode '%s'. Use cpu, gpu, auto, or preferred\n", gpu_mode_str);
-                return 1;
-            }
+
         }
     }
     
@@ -196,57 +202,13 @@ int main(int argc, char* argv[]) {
     stl_print_info(stl);
     printf("\n");
     
-    // Initialize GPU acceleration
-    if (gpu_mode != GPU_MODE_CPU_ONLY) {
-        printf("Initializing GPU acceleration...\n");
-        gpu_ctx = gpu_init(gpu_mode);
-        if (gpu_ctx && gpu_is_available(gpu_ctx)) {
-            gpu_capabilities_t caps = gpu_get_capabilities(gpu_ctx);
-            gpu_print_capabilities(&caps);
-            printf("GPU acceleration enabled\n");
-        } else {
-            if (gpu_mode == GPU_MODE_GPU_ONLY) {
-                fprintf(stderr, "Error: GPU-only mode requested but GPU not available\n");
-                stl_free(stl);
-                return 1;
-            } else {
-                printf("GPU acceleration not available, falling back to CPU\n");
-                if (gpu_ctx) gpu_cleanup(gpu_ctx);
-                gpu_ctx = NULL;
-            }
-        }
-        printf("\n");
-    }
+
     
     // Topology analysis
     topology_evaluation_t* topology_eval = NULL;
     if (use_topology_analysis) {
         printf("Analyzing mesh topology...\n");
-        if (gpu_ctx && gpu_is_available(gpu_ctx)) {
-            printf("Using GPU-accelerated topology analysis...\n");
-            topology_eval = evaluate_topology(stl, topology_type);
-            if (topology_eval) {
-                // Use GPU acceleration for specific analyses
-                if (topology_type == TOPO_ANALYSIS_CONNECTIVITY || topology_type == TOPO_ANALYSIS_COMPLETE) {
-                    gpu_analyze_connectivity(stl, topology_eval, gpu_ctx);
-                }
-                if (topology_type == TOPO_ANALYSIS_CURVATURE || topology_type == TOPO_ANALYSIS_COMPLETE) {
-                    gpu_analyze_curvature(stl, topology_eval, gpu_ctx);
-                }
-                if (topology_type == TOPO_ANALYSIS_FEATURES || topology_type == TOPO_ANALYSIS_COMPLETE) {
-                    gpu_analyze_features(stl, topology_eval, gpu_ctx);
-                }
-                if (topology_type == TOPO_ANALYSIS_DENSITY || topology_type == TOPO_ANALYSIS_COMPLETE) {
-                    gpu_analyze_density(stl, topology_eval, gpu_ctx);
-                }
-                if (topology_type == TOPO_ANALYSIS_QUALITY || topology_type == TOPO_ANALYSIS_COMPLETE) {
-                    gpu_analyze_quality(stl, topology_eval, gpu_ctx);
-                }
-            }
-        } else {
-            printf("Using CPU topology analysis...\n");
-            topology_eval = evaluate_topology(stl, topology_type);
-        }
+        topology_eval = evaluate_topology(stl, topology_type);
         
         if (topology_eval) {
             print_topology_summary(topology_eval);
@@ -277,14 +239,7 @@ int main(int argc, char* argv[]) {
     if (use_bvh) {
         printf("Using BVH spatial partitioning with %u partitions, sort axis: %d\n", num_partitions, sort_axis);
         
-        // Create spatial partition with GPU acceleration if available
-        if (gpu_ctx && gpu_is_available(gpu_ctx)) {
-            printf("Using GPU-accelerated BVH construction...\n");
-            // Note: GPU BVH construction would be implemented here
-            partition = spatial_partition_create(stl, num_partitions, sort_axis);
-        } else {
-            partition = spatial_partition_create(stl, num_partitions, sort_axis);
-        }
+        partition = spatial_partition_create(stl, num_partitions, sort_axis);
         if (!partition) {
             fprintf(stderr, "Error: Failed to create spatial partition\n");
             stl_free(stl);
@@ -310,14 +265,7 @@ int main(int argc, char* argv[]) {
             .min_triangles_per_voxel = 10
         };
         
-        // Create convex decomposition with GPU acceleration if available
-        if (gpu_ctx && gpu_is_available(gpu_ctx)) {
-            printf("Using GPU-accelerated convex decomposition...\n");
-            // Note: GPU convex decomposition would be implemented here
-            decomp = decompose_model(stl, &decomp_params);
-        } else {
-            decomp = decompose_model(stl, &decomp_params);
-        }
+        decomp = decompose_model(stl, &decomp_params);
         if (!decomp) {
             fprintf(stderr, "Error: Failed to create convex decomposition\n");
             stl_free(stl);
@@ -368,7 +316,7 @@ int main(int argc, char* argv[]) {
     if (partition) spatial_partition_free(partition);
     if (decomp) convex_decomposition_free(decomp);
     if (topology_eval) free_topology_evaluation(topology_eval);
-    if (gpu_ctx) gpu_cleanup(gpu_ctx);
+
     stl_free(stl);
     
     printf("\nSlicing completed successfully!\n");

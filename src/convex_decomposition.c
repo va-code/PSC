@@ -126,6 +126,7 @@ void convex_hull_add_face(convex_hull_t* hull, unsigned int v1, unsigned int v2,
 // QuickHull algorithm for 3D convex hull
 convex_hull_t* compute_convex_hull_3d(const point3d_t* points, unsigned int num_points, 
                                       convex_hull_algorithm_t algorithm) {
+    (void)algorithm; // Unused parameter
     if (!points || num_points < 4) return NULL;
     
     convex_hull_t* hull = convex_hull_create(num_points);
@@ -252,7 +253,7 @@ convex_hull_t* compute_convex_hull_3d(const point3d_t* points, unsigned int num_
         
         // Add this point to the hull
         convex_hull_add_vertex(hull, points[i].x, points[i].y, points[i].z);
-        unsigned int new_vertex = hull->num_vertices - 1;
+        // Vertex added at index hull->num_vertices - 1
         
         // Find visible faces and create new faces
         unsigned int* visible_faces = malloc(hull->num_faces * sizeof(unsigned int));
@@ -620,7 +621,7 @@ convex_decomposition_t* decompose_model_simple(const stl_file_t* stl, decomposit
 
 convex_decomposition_t* approximate_convex_decomposition(const stl_file_t* stl, 
                                                         unsigned int max_parts, 
-                                                        float quality_threshold,
+                                                        float quality_threshold __attribute__((unused)),
                                                         float concavity_tolerance) {
     if (!stl || stl->num_triangles == 0) return NULL;
     
@@ -899,81 +900,93 @@ void collect_leaf_volumes(convex_node_t* node, float* volumes, unsigned int* ind
 }
 
 // Analysis and visualization
-void print_decomposition_info(const convex_decomposition_t* decomp) {
-    if (!decomp) return;
+void print_decomposition_info_to_file(const convex_decomposition_t* decomp, FILE* file) {
+    if (!decomp || !file) return;
     
-    printf("Convex Decomposition Information:\n");
-    printf("Strategy: %d\n", decomp->strategy);
-    printf("Number of nodes: %u\n", decomp->num_nodes);
-    printf("Number of leaf nodes: %u\n", decomp->num_leaf_nodes);
-    printf("Total volume: %.3f\n", decomp->total_volume);
-    printf("Decomposition quality: %.3f\n", decomp->decomposition_quality);
-    printf("\n");
+    fprintf(file, "Convex Decomposition Information:\n");
+    fprintf(file, "Strategy: %d\n", decomp->strategy);
+    fprintf(file, "Number of nodes: %u\n", decomp->num_nodes);
+    fprintf(file, "Number of leaf nodes: %u\n", decomp->num_leaf_nodes);
+    fprintf(file, "Total volume: %.3f\n", decomp->total_volume);
+    fprintf(file, "Decomposition quality: %.3f\n", decomp->decomposition_quality);
+    fprintf(file, "\n");
     
     if (decomp->root) {
-        print_convex_node_info(decomp->root, 0);
+        print_convex_node_info_to_file(decomp->root, 0, file);
     }
     
     // Print adjacency information
-    printf("Adjacency Information:\n");
+    fprintf(file, "Adjacency Information:\n");
     for (unsigned int i = 0; i < decomp->num_adjacency_lists; i++) {
         if (decomp->adjacency_lists[i]) {
-            printf("Node %u has %u adjacent nodes:\n", 
+            fprintf(file, "Node %u has %u adjacent nodes:\n", 
                    decomp->adjacency_lists[i]->node_id, 
                    decomp->adjacency_lists[i]->num_adjacent);
             
             for (unsigned int j = 0; j < decomp->adjacency_lists[i]->num_adjacent; j++) {
                 adjacency_entry_t* entry = &decomp->adjacency_lists[i]->entries[j];
-                printf("  -> Node %u (overlap: %.3f, distance: %.3f)\n", 
+                fprintf(file, "  -> Node %u (overlap: %.3f, distance: %.3f)\n", 
                        entry->node_id, entry->overlap_volume, entry->distance);
             }
-            printf("\n");
+            fprintf(file, "\n");
         }
     }
 }
 
-void print_convex_node_info(const convex_node_t* node, unsigned int depth) {
-    if (!node) return;
+void print_decomposition_info(const convex_decomposition_t* decomp) {
+    print_decomposition_info_to_file(decomp, stdout);
+}
+
+void print_convex_node_info_to_file(const convex_node_t* node, unsigned int depth, FILE* file) {
+    if (!node || !file) return;
     
     // Print indentation
     for (unsigned int i = 0; i < depth; i++) {
-        printf("  ");
+        fprintf(file, "  ");
     }
     
-    printf("Node %u (", node->node_id);
+    fprintf(file, "Node %u (", node->node_id);
     
     if (node->type == CONVEX_LEAF) {
-        printf("LEAF");
+        fprintf(file, "LEAF");
         if (node->data.leaf.part) {
-            printf(", triangles: %u, volume: %.3f", 
+            fprintf(file, ", triangles: %u, volume: %.3f", 
                    node->data.leaf.part->num_triangles, 
                    node->data.leaf.part->volume);
         }
     } else {
-        printf("INTERNAL");
+        fprintf(file, "INTERNAL");
     }
     
-    printf(", concavity: %.3f", node->concavity);
-    printf(")\n");
+    fprintf(file, ", concavity: %.3f", node->concavity);
+    fprintf(file, ")\n");
     
     if (node->type == CONVEX_INTERNAL) {
-        print_convex_node_info(node->data.internal.left, depth + 1);
-        print_convex_node_info(node->data.internal.right, depth + 1);
+        print_convex_node_info_to_file(node->data.internal.left, depth + 1, file);
+        print_convex_node_info_to_file(node->data.internal.right, depth + 1, file);
     }
 }
 
-void print_part_info(const convex_part_t* part, unsigned int part_index) {
-    if (!part) return;
+void print_convex_node_info(const convex_node_t* node, unsigned int depth) {
+    print_convex_node_info_to_file(node, depth, stdout);
+}
+
+void print_part_info_to_file(const convex_part_t* part, unsigned int part_index, FILE* file) {
+    if (!part || !file) return;
     
-    printf("Part %u:\n", part_index);
-    printf("  Triangles: %u\n", part->num_triangles);
-    printf("  Volume: %.3f\n", part->volume);
-    printf("  Center: (%.3f, %.3f, %.3f)\n", part->center[0], part->center[1], part->center[2]);
-    printf("  Bounds: X[%.3f, %.3f] Y[%.3f, %.3f] Z[%.3f, %.3f]\n",
+    fprintf(file, "Part %u:\n", part_index);
+    fprintf(file, "  Triangles: %u\n", part->num_triangles);
+    fprintf(file, "  Volume: %.3f\n", part->volume);
+    fprintf(file, "  Center: (%.3f, %.3f, %.3f)\n", part->center[0], part->center[1], part->center[2]);
+    fprintf(file, "  Bounds: X[%.3f, %.3f] Y[%.3f, %.3f] Z[%.3f, %.3f]\n",
            part->hull.bounds[0], part->hull.bounds[3],
            part->hull.bounds[1], part->hull.bounds[4],
            part->hull.bounds[2], part->hull.bounds[5]);
-    printf("\n");
+    fprintf(file, "\n");
+}
+
+void print_part_info(const convex_part_t* part, unsigned int part_index) {
+    print_part_info_to_file(part, part_index, stdout);
 }
 
 // Geometry utilities
@@ -1257,9 +1270,11 @@ float compute_hull_distance(const convex_hull_t* hull1, const convex_hull_t* hul
     if (!hull1 || !hull2) return FLT_MAX;
     
     // Simple distance calculation using bounding box centers
-    float center1[3], center2[3];
-    compute_centroid(hull1, center1);
-    compute_centroid(hull2, center2);
+    float center1[3] = {0.0f, 0.0f, 0.0f};
+    float center2[3] = {0.0f, 0.0f, 0.0f};
+    if (!compute_centroid(hull1, center1) || !compute_centroid(hull2, center2)) {
+        return FLT_MAX;
+    }
     
     return distance_3d(center1[0], center1[1], center1[2], center2[0], center2[1], center2[2]);
 }
@@ -1288,5 +1303,5 @@ float compute_overlap_volume(const convex_hull_t* hull1, const convex_hull_t* hu
     float height = intersection_bounds[4] - intersection_bounds[1];
     float depth = intersection_bounds[5] - intersection_bounds[2];
     
-    return width * height * depth;
+        return width * height * depth;
 } 

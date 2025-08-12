@@ -52,7 +52,8 @@ typedef enum {
     SORT_XY, // Sort by X, then Y
     SORT_XZ, // Sort by X, then Z
     SORT_YZ, // Sort by Y, then Z
-    SORT_XYZ // Sort by X, then Y, then Z
+    SORT_XYZ, // Sort by X, then Y, then Z
+    SORT_AXIS_ALL // Sort by all axes
 } sort_axis_t;
 
 // Function declarations
@@ -76,12 +77,15 @@ void free_spatial_partition(spatial_partition_t* partition);
 unsigned int* spatial_partition_get_triangles_in_region(const spatial_partition_t* partition,
                                                         float bounds[6], unsigned int* num_triangles);
 void print_spatial_partition_info(const spatial_partition_t* partition);
+void print_spatial_partition_info_to_file(const spatial_partition_t* partition, FILE* file);
 void spatial_partition_print_info(const spatial_partition_t* partition);
 void spatial_partition_free(spatial_partition_t* partition);
 
 // Utility functions
 void print_bvh_tree(const bvh_tree_t* bvh, int depth);
 void print_bvh_node(const bvh_node_t* node, int depth);
+void print_bvh_tree_to_file(const bvh_tree_t* bvh, int depth, FILE* file);
+void print_bvh_node_to_file(const bvh_node_t* node, int depth, FILE* file);
 float calculate_surface_area(const float bounds[6]);
 int intersects_bounds(const float bounds1[6], const float bounds2[6]);
 

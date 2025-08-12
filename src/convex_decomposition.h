@@ -191,11 +191,19 @@ float compute_overlap_volume(const convex_hull_t* hull1, const convex_hull_t* hu
 
 // Analysis and visualization
 void print_convex_decomposition_info(const convex_decomposition_t* decomp);
+void print_convex_decomposition_info_to_file(const convex_decomposition_t* decomp, FILE* file);
 void print_convex_part_info(const convex_part_t* part, unsigned int part_index);
+void print_convex_part_info_to_file(const convex_part_t* part, unsigned int part_index, FILE* file);
 void print_convex_node_info(const convex_node_t* node, unsigned int depth);
+void print_convex_node_info_to_file(const convex_node_t* node, unsigned int depth, FILE* file);
 void export_convex_decomposition_to_stl(const convex_decomposition_t* decomp, const char* filename);
 void print_decomposition_info(const convex_decomposition_t* decomp);
+void print_decomposition_info_to_file(const convex_decomposition_t* decomp, FILE* file);
 void convex_decomposition_free(convex_decomposition_t* decomp);
+
+// Aliases for backward compatibility
+#define print_convex_decomposition_info print_decomposition_info
+#define free_convex_decomposition convex_decomposition_free
 
 // Geometry utilities
 float cross_product_2d(float x1, float y1, float x2, float y2);

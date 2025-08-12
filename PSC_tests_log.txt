@@ -1,0 +1,135 @@
+PSC Test Suite Execution
+Started at: 2025-08-11 21:57:02
+Test file: A.stl
+
+
+================================================================================
+TEST SECTION: BVH Tests (Started at 2025-08-11 21:57:02)
+================================================================================
+
+[2025-08-11 21:57:02] BVH: Loading STL file
+[2025-08-11 21:57:02] BVH: Analyzing STL file
+STL File Information:
+Number of triangles: 84
+Bounding box:
+  X: 0.027 to 9.236 (width: 9.209)
+  Y: 0.000 to 9.555 (depth: 9.555)
+  Z: 0.000 to 2.000 (height: 2.000)
+
+[2025-08-11 21:57:02] BVH: Creating BVH tree
+[2025-08-11 21:57:02] BVH: Analyzing BVH tree structure
+BVH Tree Structure:
+BVH Tree (max depth: 0, max triangles per leaf: 10):
+Internal: bounds: X[0.027, 9.236] Y[0.000, 9.555] Z[0.000, 2.000]
+  Internal: bounds: X[0.027, 6.822] Y[0.000, 9.555] Z[0.000, 2.000]
+    Internal: bounds: X[0.027, 6.822] Y[0.000, 9.555] Z[0.000, 2.000]
+      Leaf: 10 triangles, bounds: X[0.027, 6.822] Y[0.000, 9.555] Z[0.000, 2.000]
+      Internal: bounds: X[0.027, 6.822] Y[0.000, 9.555] Z[0.000, 2.000]
+        Leaf: 5 triangles, bounds: X[0.027, 3.926] Y[0.000, 9.555] Z[0.000, 2.000]
+        Leaf: 6 triangles, bounds: X[0.027, 6.822] Y[0.000, 9.555] Z[0.000, 2.000]
+    Internal: bounds: X[3.926, 5.398] Y[6.944, 9.555] Z[0.000, 2.000]
+      Leaf: 10 triangles, bounds: X[3.926, 5.398] Y[6.944, 9.555] Z[0.000, 2.000]
+      Internal: bounds: X[3.926, 5.398] Y[6.944, 9.555] Z[0.000, 2.000]
+        Leaf: 5 triangles, bounds: X[3.926, 4.584] Y[6.944, 9.555] Z[0.000, 2.000]
+        Leaf: 6 triangles, bounds: X[3.926, 5.398] Y[7.746, 9.555] Z[0.000, 2.000]
+  Internal: bounds: X[2.468, 9.236] Y[0.000, 9.555] Z[0.000, 2.000]
+    Internal: bounds: X[2.468, 9.236] Y[0.000, 9.555] Z[0.000, 2.000]
+      Leaf: 10 triangles, bounds: X[2.862, 9.236] Y[0.000, 9.555] Z[0.000, 2.000]
+      Internal: bounds: X[2.468, 9.236] Y[0.000, 9.555] Z[0.000, 2.000]
+        Leaf: 5 triangles, bounds: X[2.468, 6.822] Y[2.794, 9.555] Z[0.000, 2.000]
+        Leaf: 6 triangles, bounds: X[5.398, 9.236] Y[0.000, 9.555] Z[0.000, 2.000]
+    Internal: bounds: X[3.926, 5.398] Y[6.958, 9.555] Z[0.000, 2.000]
+      Leaf: 10 triangles, bounds: X[3.926, 5.398] Y[6.958, 9.555] Z[0.000, 2.000]
+      Internal: bounds: X[3.926, 5.398] Y[6.958, 9.555] Z[0.000, 2.000]
+        Leaf: 5 triangles, bounds: X[3.926, 5.398] Y[7.456, 9.555] Z[0.000, 2.000]
+        Leaf: 6 triangles, bounds: X[4.828, 5.398] Y[6.958, 9.555] Z[0.000, 2.000]
+
+[2025-08-11 21:57:02] BVH: Testing spatial partitioning
+Spatial Partition Information:
+Number of partitions: 4
+Partition 0: X[0.027, 2.329] Y[0.000, 9.555] Z[0.000, 2.000]
+Partition 1: X[2.329, 4.632] Y[0.000, 9.555] Z[0.000, 2.000]
+Partition 2: X[4.632, 6.934] Y[0.000, 9.555] Z[0.000, 2.000]
+Partition 3: X[6.934, 9.236] Y[0.000, 9.555] Z[0.000, 2.000]
+[2025-08-11 21:57:02] BVH: Cleaning up resources
+
+TEST RESULT: BVH Tests - PASSED (at 2025-08-11 21:57:02)
+
+================================================================================
+TEST SECTION: Convex Decomposition Tests (Started at 2025-08-11 21:57:02)
+================================================================================
+
+[2025-08-11 21:57:02] Convex: Loading STL file
+[2025-08-11 21:57:02] Convex: Analyzing STL file
+STL File Information:
+
+[2025-08-11 21:57:02] Convex: Testing Approximate decomposition strategy
+
+Approximate Convex Decomposition:
+----------------------------------
+Convex Decomposition Information:
+Strategy: 0
+Number of nodes: 1
+Number of leaf nodes: 1
+Total volume: 34.017
+Decomposition quality: 1.000
+
+Node 0 (LEAF, triangles: 84, volume: 34.017, concavity: 0.000)
+Adjacency Information:
+Node 0 has 0 adjacent nodes:
+
+[2025-08-11 21:57:02] Convex: Testing Exact decomposition strategy
+
+Exact Convex Decomposition:
+----------------------------
+Convex Decomposition Information:
+Strategy: 0
+Number of nodes: 1
+Number of leaf nodes: 1
+Total volume: 34.017
+Decomposition quality: 1.000
+
+Node 0 (LEAF, triangles: 84, volume: 34.017, concavity: 0.000)
+Adjacency Information:
+Node 0 has 0 adjacent nodes:
+
+[2025-08-11 21:57:02] Convex: Testing Hierarchical decomposition strategy
+
+Hierarchical Convex Decomposition:
+-----------------------------------
+Convex Decomposition Information:
+Strategy: 2
+Number of nodes: 1
+Number of leaf nodes: 1
+Total volume: 34.017
+Decomposition quality: 1.000
+
+Node 0 (LEAF, triangles: 84, volume: 34.017, concavity: 0.000)
+Adjacency Information:
+Node 0 has 0 adjacent nodes:
+
+[2025-08-11 21:57:02] Convex: Testing Voxel decomposition strategy
+
+Voxel Convex Decomposition:
+----------------------------
+Convex Decomposition Information:
+Strategy: 3
+Number of nodes: 0
+Number of leaf nodes: 0
+Total volume: 0.000
+Decomposition quality: 0.000
+
+Adjacency Information:
+[2025-08-11 21:57:02] Convex: Cleaning up resources
+
+TEST RESULT: Convex Decomposition Tests - PASSED (at 2025-08-11 21:57:02)
+
+================================================================================
+TEST SECTION: Topology Tests (Started at 2025-08-11 21:57:02)
+================================================================================
+
+[2025-08-11 21:57:02] Topology: Loading STL file
+[2025-08-11 21:57:02] Topology: Analyzing STL file
+STL File Information:
+
+[2025-08-11 21:57:02] Topology: Running Connectivity analysis

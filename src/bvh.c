@@ -142,9 +142,7 @@ void calculate_bvh_bounds(bvh_node_t* node, const stl_file_t* stl) {
         // Calculate bounds from triangles in this leaf
         if (node->data.leaf.num_triangles == 0) return;
         
-        // Initialize bounds with first triangle
-        unsigned int first_triangle_idx = node->data.leaf.triangle_indices[0];
-        const stl_triangle_t* first_triangle = &stl->triangles[first_triangle_idx];
+        // Initialize bounds
         
         node->bounds[0] = node->bounds[1] = node->bounds[2] = FLT_MAX;  // min
         node->bounds[3] = node->bounds[4] = node->bounds[5] = -FLT_MAX; // max
@@ -235,6 +233,7 @@ int compare_triangles(const void* a, const void* b) {
 // Spatial partitioning functions
 spatial_partition_t* spatial_partition_create(const stl_file_t* stl, unsigned int num_partitions,
                                              sort_axis_t sort_axis) {
+    (void)sort_axis; // Unused parameter
     if (!stl || num_partitions == 0) return NULL;
     
     spatial_partition_t* partition = malloc(sizeof(spatial_partition_t));
@@ -317,15 +316,15 @@ unsigned int* spatial_partition_get_triangles_in_region(const spatial_partition_
     return NULL;
 }
 
-void print_spatial_partition_info(const spatial_partition_t* partition) {
-    if (!partition) return;
+void print_spatial_partition_info_to_file(const spatial_partition_t* partition, FILE* file) {
+    if (!partition || !file) return;
     
-    printf("Spatial Partition Information:\n");
-    printf("Number of partitions: %u\n", partition->num_partitions);
+    fprintf(file, "Spatial Partition Information:\n");
+    fprintf(file, "Number of partitions: %u\n", partition->num_partitions);
     
     for (unsigned int i = 0; i < partition->num_partitions; i++) {
         unsigned int base_idx = i * 6;
-        printf("Partition %u: X[%.3f, %.3f] Y[%.3f, %.3f] Z[%.3f, %.3f]\n",
+        fprintf(file, "Partition %u: X[%.3f, %.3f] Y[%.3f, %.3f] Z[%.3f, %.3f]\n",
                i,
                partition->partition_bounds[base_idx + 0], partition->partition_bounds[base_idx + 3],
                partition->partition_bounds[base_idx + 1], partition->partition_bounds[base_idx + 4],
@@ -333,38 +332,51 @@ void print_spatial_partition_info(const spatial_partition_t* partition) {
     }
 }
 
-// Utility functions
-void print_bvh_tree(const bvh_tree_t* bvh, int depth) {
-    if (!bvh || !bvh->root) return;
-    
-    printf("BVH Tree (max depth: %u, max triangles per leaf: %u):\n", 
-           bvh->max_depth, bvh->max_triangles_per_leaf);
-    print_bvh_node(bvh->root, 0);
+void print_spatial_partition_info(const spatial_partition_t* partition) {
+    print_spatial_partition_info_to_file(partition, stdout);
 }
 
-void print_bvh_node(const bvh_node_t* node, int depth) {
-    if (!node) return;
+// Utility functions
+void print_bvh_tree_to_file(const bvh_tree_t* bvh, int depth, FILE* file) {
+    (void)depth; // Unused parameter
+    if (!bvh || !bvh->root || !file) return;
+    
+    fprintf(file, "BVH Tree (max depth: %u, max triangles per leaf: %u):\n", 
+           bvh->max_depth, bvh->max_triangles_per_leaf);
+    print_bvh_node_to_file(bvh->root, 0, file);
+}
+
+void print_bvh_node_to_file(const bvh_node_t* node, int depth, FILE* file) {
+    if (!node || !file) return;
     
     // Print indentation
     for (int i = 0; i < depth; i++) {
-        printf("  ");
+        fprintf(file, "  ");
     }
     
     if (node->type == BVH_LEAF) {
-        printf("Leaf: %u triangles, bounds: X[%.3f, %.3f] Y[%.3f, %.3f] Z[%.3f, %.3f]\n",
+        fprintf(file, "Leaf: %u triangles, bounds: X[%.3f, %.3f] Y[%.3f, %.3f] Z[%.3f, %.3f]\n",
                node->data.leaf.num_triangles,
                node->bounds[0], node->bounds[3],
                node->bounds[1], node->bounds[4],
                node->bounds[2], node->bounds[5]);
     } else {
-        printf("Internal: bounds: X[%.3f, %.3f] Y[%.3f, %.3f] Z[%.3f, %.3f]\n",
+        fprintf(file, "Internal: bounds: X[%.3f, %.3f] Y[%.3f, %.3f] Z[%.3f, %.3f]\n",
                node->bounds[0], node->bounds[3],
                node->bounds[1], node->bounds[4],
                node->bounds[2], node->bounds[5]);
         
-        print_bvh_node(node->data.internal.left, depth + 1);
-        print_bvh_node(node->data.internal.right, depth + 1);
+        print_bvh_node_to_file(node->data.internal.left, depth + 1, file);
+        print_bvh_node_to_file(node->data.internal.right, depth + 1, file);
     }
+}
+
+void print_bvh_tree(const bvh_tree_t* bvh, int depth) {
+    print_bvh_tree_to_file(bvh, depth, stdout);
+}
+
+void print_bvh_node(const bvh_node_t* node, int depth) {
+    print_bvh_node_to_file(node, depth, stdout);
 }
 
 float calculate_surface_area(const float bounds[6]) {

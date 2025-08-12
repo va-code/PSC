@@ -84,19 +84,28 @@ int parse_stl_ascii(FILE* file, stl_file_t* stl) {
                    &stl->triangles[current_triangle].normal[0],
                    &stl->triangles[current_triangle].normal[1],
                    &stl->triangles[current_triangle].normal[2]);
-        } else if (strstr(line, "vertex")) {
-            int vertex_idx = 0;
-            if (strstr(line, "outer loop")) {
-                // Read three vertices
-                for (int i = 0; i < 3; i++) {
-                    fgets(line, sizeof(line), file);
-                    sscanf(line, "vertex %f %f %f",
-                           &stl->triangles[current_triangle].vertices[i][0],
-                           &stl->triangles[current_triangle].vertices[i][1],
-                           &stl->triangles[current_triangle].vertices[i][2]);
+        } else if (strstr(line, "outer loop")) {
+            // Read three vertices
+            for (int i = 0; i < 3; i++) {
+                if (!fgets(line, sizeof(line), file)) {
+                    return -1; // Error reading file
                 }
-                current_triangle++;
+                if (strstr(line, "vertex")) {
+                    float x, y, z;
+                    int matched = sscanf(line, "vertex %f %f %f", &x, &y, &z);
+                    if (matched != 3) {
+                        fprintf(stderr, "Error: Invalid vertex format in ASCII STL\n");
+                        return -1;
+                    }
+                    stl->triangles[current_triangle].vertices[i][0] = x;
+                    stl->triangles[current_triangle].vertices[i][1] = y;
+                    stl->triangles[current_triangle].vertices[i][2] = z;
+                } else {
+                    fprintf(stderr, "Error: Expected vertex data in ASCII STL\n");
+                    return -1;
+                }
             }
+            current_triangle++;
         }
     }
     

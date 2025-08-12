@@ -30,7 +30,7 @@ typedef struct {
     unsigned int vertex1;          // First vertex index
     unsigned int vertex2;          // Second vertex index
     unsigned int triangle1;        // First triangle index
-    unsigned int triangle2;        // Second triangle index (or -1 if boundary)
+    unsigned int triangle2;       // Second triangle index (or UINT_MAX if boundary)
     float length;                  // Edge length
     float dihedral_angle;          // Angle between adjacent faces
     int is_boundary;               // Is this a boundary edge?

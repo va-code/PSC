@@ -140,6 +140,7 @@ int calculate_num_layers(const stl_file_t* stl, float layer_height) {
 }
 
 void generate_contours(layer_t* layer, const stl_file_t* stl, float z_height) {
+    (void)z_height; // Unused parameter
     // This is a simplified contour generation
     // In a real implementation, you would:
     // 1. Find all triangles that intersect with the z-plane
@@ -266,6 +267,7 @@ void generate_contours_with_bvh(layer_t* layer, const stl_file_t* stl, const spa
 
 void generate_contours_with_convex_parts(layer_t* layer, const stl_file_t* stl, const convex_part_t* part,
                                         float z_height, unsigned int part_id) {
+    (void)part_id; // Unused parameter
     if (!layer || !stl || !part || part->num_triangles == 0) return;
     
     // Check if this Z height intersects with the part
