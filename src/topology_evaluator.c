@@ -50,23 +50,13 @@ topology_evaluation_t* evaluate_topology(const stl_file_t* stl, topology_analysi
     // Find unique vertices and build connectivity
     eval->num_vertices = find_unique_vertices(stl, eval->vertices);
     
-    // Allocate edge array (estimate: 3 edges per triangle, but many will be shared)
-    eval->num_edges = stl->num_triangles * 3; // Overestimate
-    eval->edges = malloc(eval->num_edges * sizeof(topology_edge_t));
-    if (!eval->edges) {
-        free(eval->vertices);
-        free(eval);
-        return NULL;
-    }
-    
-    // Build edge list
-    eval->num_edges = build_edge_list(stl, eval);
-    
-    // Allocate triangle array
+    // Allocate triangle array first (needed by build_edge_list)
     eval->num_triangles = stl->num_triangles;
     eval->triangles = malloc(eval->num_triangles * sizeof(topology_triangle_t));
     if (!eval->triangles) {
-        free(eval->edges);
+        for (unsigned int i = 0; i < eval->num_vertices; i++) {
+            free(eval->vertices[i].connected_vertices);
+        }
         free(eval->vertices);
         free(eval);
         return NULL;
@@ -83,6 +73,22 @@ topology_evaluation_t* evaluate_topology(const stl_file_t* stl, topology_analysi
             eval->triangles[i].normal[j] = 0.0f;
         }
     }
+    
+    // Allocate edge array (estimate: 3 edges per triangle, but many will be shared)
+    eval->num_edges = stl->num_triangles * 3; // Overestimate
+    eval->edges = malloc(eval->num_edges * sizeof(topology_edge_t));
+    if (!eval->edges) {
+        free(eval->triangles);
+        for (unsigned int i = 0; i < eval->num_vertices; i++) {
+            free(eval->vertices[i].connected_vertices);
+        }
+        free(eval->vertices);
+        free(eval);
+        return NULL;
+    }
+    
+    // Build edge list
+    eval->num_edges = build_edge_list(stl, eval);
     
     // Perform requested analyses
     switch (analysis_type) {
@@ -280,18 +286,40 @@ int analyze_curvature(const stl_file_t* stl, topology_evaluation_t* eval) {
 int analyze_features(const stl_file_t* stl, topology_evaluation_t* eval) {
     if (!stl || !eval) return 0;
     
+    // Initialize feature counts
+    eval->features.num_sharp_edges = 0;
+    eval->features.num_corners = 0;
+    eval->features.num_flat_regions = 0;
+    
+    // Ensure we have curvature data for features
+    if (!eval->curvature.triangle_curvature || !eval->curvature.vertex_curvature) {
+        if (!analyze_curvature(stl, eval)) {
+            return 0;
+        }
+    }
+    
     // Detect sharp edges (default threshold: 30 degrees)
-    detect_sharp_edges(stl, eval, 30.0f * M_PI / 180.0f);
+    if (!detect_sharp_edges(stl, eval, 30.0f * M_PI / 180.0f)) {
+        return 0;
+    }
     
     // Detect corners (default threshold: 45 degrees)
-    detect_corners(stl, eval, 45.0f * M_PI / 180.0f);
+    if (!detect_corners(stl, eval, 45.0f * M_PI / 180.0f)) {
+        return 0;
+    }
     
     // Detect flat regions (default threshold: 5 degrees)
-    detect_flat_regions(stl, eval, 5.0f * M_PI / 180.0f);
+    if (!detect_flat_regions(stl, eval, 5.0f * M_PI / 180.0f)) {
+        return 0;
+    }
     
     // Calculate feature richness
-    eval->feature_richness = (eval->features.num_sharp_edges + eval->features.num_corners) / 
-                            (float)(eval->num_edges + eval->num_vertices);
+    if (eval->num_edges + eval->num_vertices > 0) {
+        eval->feature_richness = (eval->features.num_sharp_edges + eval->features.num_corners) / 
+                                (float)(eval->num_edges + eval->num_vertices);
+    } else {
+        eval->feature_richness = 0.0f;
+    }
     
     return 1;
 }
@@ -728,7 +756,18 @@ int detect_corners(const stl_file_t* stl, topology_evaluation_t* eval, float thr
 int detect_flat_regions(const stl_file_t* stl, topology_evaluation_t* eval, float threshold) {
     if (!stl || !eval) return 0;
     
+    // Check if curvature analysis has been performed
+    if (!eval->curvature.triangle_curvature) {
+        // Need to perform curvature analysis first
+        if (!analyze_curvature(stl, eval)) {
+            return 0;
+        }
+    }
+    
     eval->features.flat_regions = malloc(eval->num_triangles * sizeof(unsigned int));
+    if (!eval->features.flat_regions) {
+        return 0;
+    }
     eval->features.num_flat_regions = 0;
     
     for (unsigned int i = 0; i < eval->num_triangles; i++) {

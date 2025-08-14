@@ -1,5 +1,7 @@
 CC = gcc
-CFLAGS = -Wall -Wextra -std=c99 -O2 -g -I./src
+# Debug flags enabled by default: -g3 for maximum debug info, -O0 to disable optimization
+# -fno-omit-frame-pointer helps with backtraces
+CFLAGS = -Wall -Wextra -std=c99 -g3 -O0 -fno-omit-frame-pointer -I./src
 LDFLAGS = -lm
 
 # Directories
@@ -29,11 +31,11 @@ $(BUILD_DIR):
 
 # Build the executable
 $(TARGET): $(OBJS) | $(BUILD_DIR)
-	$(CC) $(OBJS) -o $@ $(LDFLAGS)
+	$(CC) $(CFLAGS) $(OBJS) -o $@ $(LDFLAGS)
 
 # Build test program
 $(TEST_TARGET): $(TEST_OBJS) $(BUILD_DIR)/stl_parser.o $(BUILD_DIR)/topology_evaluator.o $(BUILD_DIR)/bvh.o $(BUILD_DIR)/convex_decomposition.o | $(BUILD_DIR)
-	$(CC) $^ -o $@ $(LDFLAGS)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
 # Compile source files
 $(BUILD_DIR)/%.o: src/%.c | $(BUILD_DIR)
