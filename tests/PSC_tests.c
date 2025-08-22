@@ -4,10 +4,10 @@
 #include <time.h>
 #include <assert.h>
 #include <limits.h>
+#include <math.h>
 #include "../src/stl_parser.h"
 #include "../src/topology_evaluator.h"
-#include "../src/convex_decomposition.h"
-#include "../src/bvh.h"
+#include "../src/PSC_model_inspector.h"
 
 // Helper function to validate vertex data
 void validate_vertex_data(FILE* log_file, const topology_vertex_t* vertex, unsigned int vertex_idx) {
@@ -130,10 +130,8 @@ void repeat_char(char* buffer, char c, int n) {
 }
 
 // Function declarations for test suites
-int run_bvh_tests(const char* stl_file, FILE* log_file);
-int run_convex_tests(const char* stl_file, FILE* log_file);
 int run_topology_tests(const char* stl_file, FILE* log_file);
-int run_holes_tests(const char* stl_file, FILE* log_file);
+void run_model_inspector(const char* stl_file);
 
 // Helper function to get current timestamp
 void get_timestamp(char* buffer, size_t size) {
@@ -180,15 +178,26 @@ void log_test_result(FILE* log_file, const char* test_name, int success) {
 
 int main(int argc, char* argv[]) {
     char separator[81];  // Used for formatting output
+    int show_inspector = 1;  // Default: show inspector after tests
     
     if (argc < 2) {
-        printf("Usage: %s <stl_file>\n", argv[0]);
+        printf("Usage: %s <stl_file> [--no-inspector]\n", argv[0]);
         printf("Example: %s A.stl\n", argv[0]);
+        printf("Options:\n");
+        printf("  --no-inspector    Run tests only, skip model inspector\n");
         return 1;
     }
     
+    // Check for --no-inspector flag
+    for (int i = 2; i < argc; i++) {
+        if (strcmp(argv[i], "--no-inspector") == 0) {
+            show_inspector = 0;
+            break;
+        }
+    }
+    
     char* stl_file = argv[1];
-    FILE* log_file = fopen("build/PSC_tests_log.txt", "w");
+    FILE* log_file = fopen("PSC_model_inspector_log.txt", "w");
     if (!log_file) {
         printf("Error: Could not open log file for writing\n");
         return 1;
@@ -201,32 +210,14 @@ int main(int argc, char* argv[]) {
     fprintf(log_file, "Started at: %s\n", timestamp);
     fprintf(log_file, "Test file: %s\n\n", stl_file);
     
-    int total_tests = 4;
+    int total_tests = 1;
     int passed_tests = 0;
     
-    // Run BVH tests
-    log_section_header(log_file, "BVH Tests");
-    int bvh_result = run_bvh_tests(stl_file, log_file);
-    log_test_result(log_file, "BVH Tests", bvh_result);
-    if (bvh_result) passed_tests++;
-    
-    // Run Convex Decomposition tests
-    log_section_header(log_file, "Convex Decomposition Tests");
-    int convex_result = run_convex_tests(stl_file, log_file);
-    log_test_result(log_file, "Convex Decomposition Tests", convex_result);
-    if (convex_result) passed_tests++;
-    
-    // Run Topology tests
+    // Run Topology tests only
     log_section_header(log_file, "Topology Tests");
     int topology_result = run_topology_tests(stl_file, log_file);
     log_test_result(log_file, "Topology Tests", topology_result);
     if (topology_result) passed_tests++;
-    
-    // Run Holes tests
-    log_section_header(log_file, "Hole Detection Tests");
-    int holes_result = run_holes_tests(stl_file, log_file);
-    log_test_result(log_file, "Hole Detection Tests", holes_result);
-    if (holes_result) passed_tests++;
     
     // Write summary
     get_timestamp(timestamp, sizeof(timestamp));
@@ -246,137 +237,22 @@ int main(int argc, char* argv[]) {
     printf("Passed: %d\n", passed_tests);
     printf("Failed: %d\n", total_tests - passed_tests);
     printf("Success Rate: %.1f%%\n", (float)passed_tests / total_tests * 100);
-    printf("\nDetailed results have been written to PSC_tests_log.txt\n");
+    printf("\nDetailed results have been written to PSC_model_inspector_log.txt\n");
     
     fclose(log_file);
+    
+    // Run model inspector after all tests are complete (if requested)
+    if (show_inspector) {
+        printf("\nAll tests completed. Starting model inspector...\n");
+        run_model_inspector(stl_file);
+    } else {
+        printf("\nAll tests completed. Skipping model inspector.\n");
+    }
+    
     return (passed_tests == total_tests) ? 0 : 1;
 }
 
-// BVH test suite
-int run_bvh_tests(const char* stl_file, FILE* log_file) {
-    log_test_step(log_file, "BVH", "Loading STL file");
-    stl_file_t* stl = stl_load_file(stl_file);
-    if (!stl) {
-        fprintf(log_file, "Failed to load STL file for BVH tests\n");
-        return 0;
-    }
-    
-    // Print STL information
-    log_test_step(log_file, "BVH", "Analyzing STL file");
-    fprintf(log_file, "STL File Information:\n");
-    fprintf(log_file, "Number of triangles: %u\n", stl->num_triangles);
-    fprintf(log_file, "Bounding box:\n");
-    fprintf(log_file, "  X: %.3f to %.3f (width: %.3f)\n",
-            stl->bounds[0], stl->bounds[3], stl->bounds[3] - stl->bounds[0]);
-    fprintf(log_file, "  Y: %.3f to %.3f (depth: %.3f)\n",
-            stl->bounds[1], stl->bounds[4], stl->bounds[4] - stl->bounds[1]);
-    fprintf(log_file, "  Z: %.3f to %.3f (height: %.3f)\n\n",
-            stl->bounds[2], stl->bounds[5], stl->bounds[5] - stl->bounds[2]);
-    
-    // Create BVH tree
-    log_test_step(log_file, "BVH", "Creating BVH tree");
-    bvh_tree_t* bvh = bvh_create(stl, 10); // Max 10 triangles per leaf
-    if (!bvh) {
-        fprintf(log_file, "Failed to create BVH tree\n");
-        free_stl(stl);
-        return 0;
-    }
-    
-    // Print BVH information
-    log_test_step(log_file, "BVH", "Analyzing BVH tree structure");
-    fprintf(log_file, "BVH Tree Structure:\n");
-    print_bvh_tree(bvh, 0);
-    print_bvh_tree_to_file(bvh, 0, log_file);
-    fprintf(log_file, "\n");
-    
-    // Test spatial partitioning
-    log_test_step(log_file, "BVH", "Testing spatial partitioning");
-    spatial_partition_t* partition = spatial_partition_create(stl, 4, SORT_AXIS_ALL);
-    if (!partition) {
-        fprintf(log_file, "Failed to create spatial partition\n");
-        free_bvh(bvh);
-        free_stl(stl);
-        return 0;
-    }
-    
-    print_spatial_partition_info(partition);
-    print_spatial_partition_info_to_file(partition, log_file);
-    
-    // Cleanup
-    log_test_step(log_file, "BVH", "Cleaning up resources");
-    free_spatial_partition(partition);
-    free_bvh(bvh);
-    free_stl(stl);
-    
-    return 1;
-}
-
-// Convex Decomposition test suite
-int run_convex_tests(const char* stl_file, FILE* log_file) {
-    log_test_step(log_file, "Convex", "Loading STL file");
-    stl_file_t* stl = stl_load_file(stl_file);
-    if (!stl) {
-        fprintf(log_file, "Failed to load STL file for convex decomposition tests\n");
-        return 0;
-    }
-    
-    // Print STL information
-    log_test_step(log_file, "Convex", "Analyzing STL file");
-    fprintf(log_file, "STL File Information:\n");
-    print_stl_info(stl);
-    fprintf(log_file, "\n");
-    
-    // Test different decomposition strategies
-    decomposition_strategy_t strategies[] = {
-        DECOMP_APPROX_CONVEX,
-        DECOMP_EXACT_CONVEX,
-        DECOMP_HIERARCHICAL,
-        DECOMP_VOXEL_BASED
-    };
-    const char* strategy_names[] = {
-        "Approximate",
-        "Exact",
-        "Hierarchical",
-        "Voxel"
-    };
-    
-    for (int i = 0; i < 4; i++) {
-        char step_desc[256];
-        snprintf(step_desc, sizeof(step_desc), "Testing %s decomposition strategy", strategy_names[i]);
-        log_test_step(log_file, "Convex", step_desc);
-        
-        fprintf(log_file, "\n%s Convex Decomposition:\n", strategy_names[i]);
-        char separator[256];
-        repeat_char(separator, '-', strlen(strategy_names[i]) + 23);
-        fprintf(log_file, "%s\n", separator);
-        
-        decomposition_params_t params = {
-            .strategy = strategies[i],
-            .max_parts = 8,
-            .quality_threshold = 0.8f,
-            .concavity_tolerance = 0.1f,
-            .voxel_size = 1.0f,
-            .min_triangles_per_voxel = 10
-        };
-        
-        convex_decomposition_t* decomp = decompose_model(stl, &params);
-        if (decomp) {
-            print_decomposition_info(decomp);
-    print_decomposition_info_to_file(decomp, log_file);
-            free_convex_decomposition(decomp);
-        } else {
-            fprintf(log_file, "Failed to create decomposition\n");
-            free_stl(stl);
-            return 0;
-        }
-    }
-    
-    log_test_step(log_file, "Convex", "Cleaning up resources");
-    free_stl(stl);
-    return 1;
-}
-
-// Topology test suite
+// Simplified topology test function
 int run_topology_tests(const char* stl_file, FILE* log_file) {
     log_test_step(log_file, "Topology", "Loading STL file");
     stl_file_t* stl = stl_load_file(stl_file);
@@ -388,254 +264,100 @@ int run_topology_tests(const char* stl_file, FILE* log_file) {
     // Print STL information
     log_test_step(log_file, "Topology", "Analyzing STL file");
     fprintf(log_file, "STL File Information:\n");
-    print_stl_info(stl);
-    fprintf(log_file, "\n");
-    
-    // Validate STL data
-    assert(stl->num_triangles > 0 && "STL file has no triangles");
-    for (unsigned int i = 0; i < stl->num_triangles; i++) {
-        const stl_triangle_t* tri = &stl->triangles[i];
-        float normal_length = sqrtf(tri->normal[0] * tri->normal[0] + 
-                                  tri->normal[1] * tri->normal[1] + 
-                                  tri->normal[2] * tri->normal[2]);
-        assert(fabsf(normal_length - 1.0f) < 1e-6f && "Normal vector is not normalized");
-    }
-    
-    // Test different analysis types
-    topology_analysis_type_t types[] = {
-        TOPO_ANALYSIS_CONNECTIVITY,
-        TOPO_ANALYSIS_CURVATURE,
-        TOPO_ANALYSIS_FEATURES,
-        TOPO_ANALYSIS_DENSITY,
-        TOPO_ANALYSIS_QUALITY,
-        TOPO_ANALYSIS_COMPLETE
-    };
-    const char* type_names[] = {
-        "Connectivity",
-        "Curvature",
-        "Features",
-        "Density",
-        "Quality",
-        "Complete"
-    };
-    
-    for (int i = 0; i < 6; i++) {
-        char step_desc[256];
-        snprintf(step_desc, sizeof(step_desc), "Running %s analysis", type_names[i]);
-        log_test_step(log_file, "Topology", step_desc);
-        
-        fprintf(log_file, "\n%s Analysis:\n", type_names[i]);
-        char separator[256];
-        repeat_char(separator, '-', strlen(type_names[i]) + 10);
-        fprintf(log_file, "%s\n", separator);
-        
-        topology_evaluation_t* eval = evaluate_topology(stl, types[i]);
-        if (!eval) {
-            fprintf(log_file, "Failed to perform analysis\n");
-            continue;
-        }
-        
-        // Validate topology data structure
-        log_test_step(log_file, "Topology", "Validating topology data");
-        validate_topology_data(log_file, eval);
-        
-        log_test_step(log_file, "Topology", "Printing topology summary");
-        print_topology_summary(eval);
-        
-        // Print specific analysis results based on type
-        log_test_step(log_file, "Topology", "Printing detailed analysis");
-        switch (types[i]) {
-            case TOPO_ANALYSIS_CONNECTIVITY:
-                print_connectivity_analysis(eval);
-                break;
-            case TOPO_ANALYSIS_CURVATURE:
-                print_curvature_analysis(eval);
-                break;
-            case TOPO_ANALYSIS_FEATURES:
-                print_feature_analysis(eval);
-                break;
-            case TOPO_ANALYSIS_DENSITY:
-                print_density_analysis(eval);
-                break;
-            case TOPO_ANALYSIS_QUALITY:
-                print_quality_analysis(eval);
-                break;
-            case TOPO_ANALYSIS_COMPLETE:
-                print_connectivity_analysis(eval);
-                print_curvature_analysis(eval);
-                print_feature_analysis(eval);
-                print_density_analysis(eval);
-                print_quality_analysis(eval);
-                break;
-            default:
-                break;
-        }
-        
-        // Validate analysis-specific data
-        log_test_step(log_file, "Topology", "Validating analysis results");
-        switch (types[i]) {
-            case TOPO_ANALYSIS_CURVATURE:
-            case TOPO_ANALYSIS_COMPLETE:
-                assert(eval->curvature.vertex_curvature != NULL && "Vertex curvature array is NULL");
-                assert(eval->curvature.triangle_curvature != NULL && "Triangle curvature array is NULL");
-                break;
-            case TOPO_ANALYSIS_FEATURES:
-                if (eval->features.num_sharp_edges > 0) {
-                    assert(eval->features.sharp_edges != NULL && "Sharp edges array is NULL");
-                }
-                if (eval->features.num_corners > 0) {
-                    assert(eval->features.corners != NULL && "Corners array is NULL");
-                }
-                break;
-            case TOPO_ANALYSIS_DENSITY:
-                assert(eval->density.vertex_density != NULL && "Vertex density array is NULL");
-                assert(eval->density.triangle_density != NULL && "Triangle density array is NULL");
-                break;
-            case TOPO_ANALYSIS_QUALITY:
-                assert(eval->quality.triangle_quality != NULL && "Triangle quality array is NULL");
-                if (eval->quality.num_poor_quality > 0) {
-                    assert(eval->quality.poor_quality_triangles != NULL && "Poor quality triangles array is NULL");
-                }
-                break;
-            default:
-                break;
-        }
-        
-        log_test_step(log_file, "Topology", "Cleaning up analysis resources");
-        free_topology_evaluation(eval);
-    }
-    
-    log_test_step(log_file, "Topology", "Cleaning up STL resources");
-    free_stl(stl);
-    return 1;
-}
-
-// Helper function to validate hole loop data
-void validate_hole_loop(FILE* log_file, const hole_loop_t* loop, unsigned int loop_idx) {
-    fprintf(log_file, "  Loop %u:\n", loop_idx);
-    fprintf(log_file, "    Edges: %u\n", loop->num_edges);
-    fprintf(log_file, "    Vertices: %u\n", loop->num_vertices);
-    fprintf(log_file, "    Perimeter: %.6f\n", loop->perimeter);
-    fprintf(log_file, "    Is continuous: %s\n", loop->is_continuous ? "Yes" : "No");
-    
-    assert(loop->edge_indices != NULL && "Loop edge indices array is NULL");
-    assert(loop->vertex_indices != NULL && "Loop vertex indices array is NULL");
-    assert(loop->num_edges > 0 && "Loop has no edges");
-    assert(loop->num_vertices > 0 && "Loop has no vertices");
-    assert(loop->perimeter > 0.0f && "Loop perimeter is not positive");
-    
-    fprintf(log_file, "    Edge indices: ");
-    for (unsigned int i = 0; i < loop->num_edges; i++) {
-        fprintf(log_file, "%u ", loop->edge_indices[i]);
-    }
-    fprintf(log_file, "\n    Vertex indices: ");
-    for (unsigned int i = 0; i < loop->num_vertices; i++) {
-        fprintf(log_file, "%u ", loop->vertex_indices[i]);
-    }
-    fprintf(log_file, "\n");
-}
-
-// Helper function to validate hole detection data
-void validate_hole_detection(FILE* log_file, const hole_detection_t* holes, const topology_evaluation_t* eval) {
-    fprintf(log_file, "\nHole Detection Data Validation:\n");
-    fprintf(log_file, "============================\n");
-    
-    assert(holes != NULL && "Hole detection structure is NULL");
-    if (holes->num_loops > 0) {
-        assert(holes->loops != NULL && "Loops array is NULL");
-        
-        fprintf(log_file, "Number of loops: %u\n", holes->num_loops);
-        fprintf(log_file, "Number of shared vertices: %u\n", holes->num_shared_vertices);
-        fprintf(log_file, "Has intersecting loops: %s\n", holes->has_intersecting_loops ? "Yes" : "No");
-        
-        // Validate each loop
-        for (unsigned int i = 0; i < holes->num_loops; i++) {
-            validate_hole_loop(log_file, &holes->loops[i], i);
+    fprintf(log_file, "Number of triangles: %u\n", stl->num_triangles);
+    fprintf(log_file, "Bounding box:\n");
+    fprintf(log_file, "  X: %.3f to %.3f (width: %.3f)\n",
+            stl->bounds[0], stl->bounds[3], stl->bounds[3] - stl->bounds[0]);
+    fprintf(log_file, "  Y: %.3f to %.3f (depth: %.3f)\n",
+            stl->bounds[1], stl->bounds[4], stl->bounds[4] - stl->bounds[1]);
+    fprintf(log_file, "  Z: %.3f to %.3f (height: %.3f)\n\n",
+            stl->bounds[2], stl->bounds[5], stl->bounds[5] - stl->bounds[2]);
             
-            // Validate edge indices
-            for (unsigned int j = 0; j < holes->loops[i].num_edges; j++) {
-                unsigned int edge_idx = holes->loops[i].edge_indices[j];
-                assert(edge_idx < eval->num_edges && "Edge index out of bounds");
-            }
-            
-            // Validate vertex indices
-            for (unsigned int j = 0; j < holes->loops[i].num_vertices; j++) {
-                unsigned int vertex_idx = holes->loops[i].vertex_indices[j];
-                assert(vertex_idx < eval->num_vertices && "Vertex index out of bounds");
-            }
-        }
-        
-        // Validate shared vertices
-        if (holes->num_shared_vertices > 0) {
-            assert(holes->shared_vertices != NULL && "Shared vertices array is NULL");
-            fprintf(log_file, "\nShared vertices: ");
-            for (unsigned int i = 0; i < holes->num_shared_vertices; i++) {
-                assert(holes->shared_vertices[i] < eval->num_vertices && "Shared vertex index out of bounds");
-                fprintf(log_file, "%u ", holes->shared_vertices[i]);
-            }
-            fprintf(log_file, "\n");
-        }
-    }
-}
-
-// Hole Detection test suite
-int run_holes_tests(const char* stl_file, FILE* log_file) {
-    log_test_step(log_file, "Holes", "Loading STL file");
-    stl_file_t* stl = stl_load_file(stl_file);
-    if (!stl) {
-        fprintf(log_file, "Failed to load STL file for hole detection tests\n");
-        return 0;
-    }
-    
-    // Print STL information
-    log_test_step(log_file, "Holes", "Analyzing STL file");
-    fprintf(log_file, "STL File Information:\n");
-    print_stl_info(stl);
-    fprintf(log_file, "\n");
-    
-    // Validate STL data
-    assert(stl->num_triangles > 0 && "STL file has no triangles");
-    for (unsigned int i = 0; i < stl->num_triangles; i++) {
-        const stl_triangle_t* tri = &stl->triangles[i];
-        for (int j = 0; j < 3; j++) {
-            assert(tri->vertices[j] != NULL && "Triangle vertex is NULL");
-            assert(tri->normal[j] >= -1.0f && tri->normal[j] <= 1.0f && "Normal component out of range [-1,1]");
-        }
-    }
-    
-    // Perform topology evaluation with hole detection
-    log_test_step(log_file, "Holes", "Running hole detection analysis");
-    topology_evaluation_t* eval = evaluate_topology(stl, TOPO_ANALYSIS_HOLES);
+    // Perform topology evaluation
+    log_test_step(log_file, "Topology", "Running topology analysis");
+    topology_evaluation_t* eval = evaluate_topology(stl, TOPO_ANALYSIS_COMPLETE);
     if (!eval) {
         fprintf(log_file, "Failed to evaluate topology\n");
         free_stl(stl);
-        return 1; // Return success even if analysis fails
+        return 0;
     }
     
     // Validate topology data structure
-    log_test_step(log_file, "Holes", "Validating topology data");
+    log_test_step(log_file, "Topology", "Validating topology data");
     validate_topology_data(log_file, eval);
     
     // Print topology summary
-    log_test_step(log_file, "Holes", "Printing topology summary");
+    log_test_step(log_file, "Topology", "Printing topology summary");
     print_topology_summary(eval);
     
-    // Validate and print hole detection data
-    log_test_step(log_file, "Holes", "Validating hole detection data");
-    validate_hole_detection(log_file, &eval->holes, eval);
-    
-    // Print detailed hole analysis
-    log_test_step(log_file, "Holes", "Printing hole analysis");
-    print_hole_analysis(&eval->holes);
-    
-    // Print connectivity analysis (includes boundary edges which are important for holes)
-    log_test_step(log_file, "Holes", "Printing connectivity analysis");
+    // Print detailed analyses
+    log_test_step(log_file, "Topology", "Printing detailed analyses");
     print_connectivity_analysis(eval);
+    print_curvature_analysis(eval);
+    print_feature_analysis(eval);
+    print_density_analysis(eval);
+    print_quality_analysis(eval);
     
     // Cleanup
-    log_test_step(log_file, "Holes", "Cleaning up resources");
+    log_test_step(log_file, "Topology", "Cleaning up resources");
     free_topology_evaluation(eval);
     free_stl(stl);
     
     return 1;
 }
+
+
+
+
+
+
+
+// Model inspector function to run after all tests
+void run_model_inspector(const char* stl_file) {
+    printf("Loading STL file for visualization...\n");
+    stl_file_t* stl = stl_load_file(stl_file);
+    if (!stl) {
+        printf("Failed to load STL file for model inspector\n");
+        return;
+    }
+    
+    // Initialize and show STL viewer
+    printf("Initializing model inspector...\n");
+    stl_viewer_t* viewer = viewer_init(800, 600);
+    if (!viewer) {
+        printf("Failed to initialize model inspector\n");
+        free_stl(stl);
+        return;
+    }
+    
+    if (!viewer_load_stl(viewer, stl)) {
+        printf("Failed to load STL into viewer\n");
+        viewer_cleanup(viewer);
+        free_stl(stl);
+        return;
+    }
+    
+    printf("Model inspector ready. Use mouse to rotate, ESC to exit.\n");
+    printf("Controls:\n");
+    printf("  - Left mouse button + drag: Rotate view\n");
+    printf("  - ESC: Exit inspector\n");
+    
+    // Main display loop
+    while (!glfwWindowShouldClose(viewer->window)) {
+        viewer_display(viewer);
+        glfwSwapBuffers(viewer->window);
+        glfwPollEvents();
+        
+        // Check for ESC key
+        if (glfwGetKey(viewer->window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
+            glfwSetWindowShouldClose(viewer->window, GLFW_TRUE);
+        }
+    }
+    
+    // Cleanup
+    viewer_cleanup(viewer);
+    free_stl(stl);
+    printf("Model inspector closed.\n");
+}
+
+

@@ -87,8 +87,8 @@ topology_evaluation_t* evaluate_topology(const stl_file_t* stl, topology_analysi
         return NULL;
     }
     
-    // Build edge list
-    eval->num_edges = build_edge_list(stl, eval);
+    // Build edge list (no visualization callback)
+    eval->num_edges = build_edge_list(stl, eval, NULL, NULL);
     
     // Perform requested analyses
     switch (analysis_type) {
@@ -444,7 +444,7 @@ unsigned int find_unique_vertices(const stl_file_t* stl, topology_vertex_t* vert
     return unique_count;
 }
 
-unsigned int build_edge_list(const stl_file_t* stl, topology_evaluation_t* eval) {
+unsigned int build_edge_list(const stl_file_t* stl, topology_evaluation_t* eval, edge_callback_t callback, void* user_data) {
     if (!stl || !eval) return 0;
     
     unsigned int edge_count = 0;
@@ -496,6 +496,10 @@ unsigned int build_edge_list(const stl_file_t* stl, topology_evaluation_t* eval)
                 // Set the edge index in the triangle
                 eval->triangles[i].edges[j] = edge_count;
                 
+                // Notify callback of new edge
+                if (callback) {
+                    callback(edge_count, user_data);
+                }
                 edge_count++;
             } else {
                 // Set the edge index in the triangle for existing edge

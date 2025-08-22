@@ -156,9 +156,12 @@ int analyze_features(const stl_file_t* stl, topology_evaluation_t* eval);
 int analyze_density(const stl_file_t* stl, topology_evaluation_t* eval);
 int analyze_quality(const stl_file_t* stl, topology_evaluation_t* eval);
 
+// Edge processing callback type
+typedef void (*edge_callback_t)(unsigned int edge_index, void* user_data);
+
 // Utility functions
 unsigned int find_unique_vertices(const stl_file_t* stl, topology_vertex_t* vertices);
-unsigned int build_edge_list(const stl_file_t* stl, topology_evaluation_t* eval);
+unsigned int build_edge_list(const stl_file_t* stl, topology_evaluation_t* eval, edge_callback_t callback, void* user_data);
 float calculate_vertex_curvature(const stl_file_t* stl, unsigned int vertex_idx, 
                                 const topology_evaluation_t* eval);
 float calculate_triangle_curvature(const stl_triangle_t* triangle, 

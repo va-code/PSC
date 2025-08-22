@@ -1,1307 +1,1559 @@
 #include "convex_decomposition.h"
-#include <stdlib.h>
-#include <string.h>
 #include <math.h>
 #include <stdio.h>
-#include <float.h>
+#include <stdlib.h>
+#include <string.h>
 
-// Convex hull operations
-convex_hull_t* convex_hull_create(unsigned int initial_capacity) {
-    convex_hull_t* hull = malloc(sizeof(convex_hull_t));
-    if (!hull) return NULL;
-    
-    hull->vertices = malloc(initial_capacity * sizeof(point3d_t));
-    if (!hull->vertices) {
-        free(hull);
-        return NULL;
-    }
-    
-    hull->faces = malloc(initial_capacity * sizeof(face_t));
-    if (!hull->faces) {
-        free(hull->vertices);
-        free(hull);
-        return NULL;
-    }
-    
-    hull->num_vertices = 0;
-    hull->capacity = initial_capacity;
-    hull->num_faces = 0;
-    hull->face_capacity = initial_capacity;
-    
-    // Initialize bounds
-    hull->bounds[0] = hull->bounds[1] = hull->bounds[2] = FLT_MAX;
-    hull->bounds[3] = hull->bounds[4] = hull->bounds[5] = -FLT_MAX;
-    
-    return hull;
-}
+// Structure to represent connected components
+typedef struct {
+    int* triangle_indices;
+    int count;
+    int capacity;
+} connected_component_t;
 
-void convex_hull_free(convex_hull_t* hull) {
-    if (!hull) return;
+// Check if two triangles share at least 2 vertices (connected)
+// This is faster than full edge matching and works well for most STL meshes
+int triangles_are_connected(const stl_triangle_t* tri1, const stl_triangle_t* tri2) {
+    const float EPSILON = 1e-6f;
+    int shared_vertices = 0;
     
-    if (hull->vertices) {
-        free(hull->vertices);
-    }
-    if (hull->faces) {
-        free(hull->faces);
-    }
-    free(hull);
-}
-
-void convex_hull_add_vertex(convex_hull_t* hull, float x, float y, float z) {
-    if (!hull) return;
-    
-    // Expand capacity if needed
-    if (hull->num_vertices >= hull->capacity) {
-        hull->capacity *= 2;
-        hull->vertices = realloc(hull->vertices, hull->capacity * sizeof(point3d_t));
-        if (!hull->vertices) return;
-    }
-    
-    hull->vertices[hull->num_vertices].x = x;
-    hull->vertices[hull->num_vertices].y = y;
-    hull->vertices[hull->num_vertices].z = z;
-    hull->num_vertices++;
-    
-    // Update bounds
-    if (x < hull->bounds[0]) hull->bounds[0] = x;
-    if (y < hull->bounds[1]) hull->bounds[1] = y;
-    if (z < hull->bounds[2]) hull->bounds[2] = z;
-    if (x > hull->bounds[3]) hull->bounds[3] = x;
-    if (y > hull->bounds[4]) hull->bounds[4] = y;
-    if (z > hull->bounds[5]) hull->bounds[5] = z;
-}
-
-void convex_hull_add_face(convex_hull_t* hull, unsigned int v1, unsigned int v2, unsigned int v3) {
-    if (!hull) return;
-    
-    // Expand face capacity if needed
-    if (hull->num_faces >= hull->face_capacity) {
-        hull->face_capacity *= 2;
-        hull->faces = realloc(hull->faces, hull->face_capacity * sizeof(face_t));
-        if (!hull->faces) return;
-    }
-    
-    hull->faces[hull->num_faces].vertices[0] = v1;
-    hull->faces[hull->num_faces].vertices[1] = v2;
-    hull->faces[hull->num_faces].vertices[2] = v3;
-    
-    // Compute face normal and distance
-    point3d_t* p1 = &hull->vertices[v1];
-    point3d_t* p2 = &hull->vertices[v2];
-    point3d_t* p3 = &hull->vertices[v3];
-    
-    // Compute two edge vectors
-    float ux = p2->x - p1->x;
-    float uy = p2->y - p1->y;
-    float uz = p2->z - p1->z;
-    
-    float vx = p3->x - p1->x;
-    float vy = p3->y - p1->y;
-    float vz = p3->z - p1->z;
-    
-    // Cross product to get normal
-    hull->faces[hull->num_faces].normal.x = uy * vz - uz * vy;
-    hull->faces[hull->num_faces].normal.y = uz * vx - ux * vz;
-    hull->faces[hull->num_faces].normal.z = ux * vy - uy * vx;
-    
-    // Normalize the normal vector
-    float length = sqrtf(hull->faces[hull->num_faces].normal.x * hull->faces[hull->num_faces].normal.x +
-                        hull->faces[hull->num_faces].normal.y * hull->faces[hull->num_faces].normal.y +
-                        hull->faces[hull->num_faces].normal.z * hull->faces[hull->num_faces].normal.z);
-    
-    if (length > 0.0f) {
-        hull->faces[hull->num_faces].normal.x /= length;
-        hull->faces[hull->num_faces].normal.y /= length;
-        hull->faces[hull->num_faces].normal.z /= length;
-    }
-    
-    // Compute distance from origin to plane
-    hull->faces[hull->num_faces].d = -(hull->faces[hull->num_faces].normal.x * p1->x +
-                                      hull->faces[hull->num_faces].normal.y * p1->y +
-                                      hull->faces[hull->num_faces].normal.z * p1->z);
-    
-    hull->num_faces++;
-}
-
-// QuickHull algorithm for 3D convex hull
-convex_hull_t* compute_convex_hull_3d(const point3d_t* points, unsigned int num_points, 
-                                      convex_hull_algorithm_t algorithm) {
-    (void)algorithm; // Unused parameter
-    if (!points || num_points < 4) return NULL;
-    
-    convex_hull_t* hull = convex_hull_create(num_points);
-    if (!hull) return NULL;
-    
-    // Find extreme points along each axis
-    unsigned int min_x = 0, max_x = 0;
-    unsigned int min_y = 0, max_y = 0;
-    unsigned int min_z = 0, max_z = 0;
-    
-    for (unsigned int i = 1; i < num_points; i++) {
-        if (points[i].x < points[min_x].x) min_x = i;
-        if (points[i].x > points[max_x].x) max_x = i;
-        if (points[i].y < points[min_y].y) min_y = i;
-        if (points[i].y > points[max_y].y) max_y = i;
-        if (points[i].z < points[min_z].z) min_z = i;
-        if (points[i].z > points[max_z].z) max_z = i;
-    }
-    
-    // Find the pair with maximum distance
-    float max_dist = 0.0f;
-    unsigned int p1 = 0, p2 = 0;
-    
-    // Check all extreme point pairs
-    unsigned int extreme_points[] = {min_x, max_x, min_y, max_y, min_z, max_z};
-    for (int i = 0; i < 6; i++) {
-        for (int j = i + 1; j < 6; j++) {
-            float dx = points[extreme_points[i]].x - points[extreme_points[j]].x;
-            float dy = points[extreme_points[i]].y - points[extreme_points[j]].y;
-            float dz = points[extreme_points[i]].z - points[extreme_points[j]].z;
-            float dist = dx * dx + dy * dy + dz * dz;
-            if (dist > max_dist) {
-                max_dist = dist;
-                p1 = extreme_points[i];
-                p2 = extreme_points[j];
-            }
-        }
-    }
-    
-    // Add the two extreme points to hull
-    convex_hull_add_vertex(hull, points[p1].x, points[p1].y, points[p1].z);
-    convex_hull_add_vertex(hull, points[p2].x, points[p2].y, points[p2].z);
-    
-    // Find the point with maximum distance from the line p1-p2
-    max_dist = 0.0f;
-    unsigned int p3 = 0;
-    for (unsigned int i = 0; i < num_points; i++) {
-        if (i == p1 || i == p2) continue;
-        
-        // Vector from p1 to p2
-        float vx = points[p2].x - points[p1].x;
-        float vy = points[p2].y - points[p1].y;
-        float vz = points[p2].z - points[p1].z;
-        
-        // Vector from p1 to current point
-        float wx = points[i].x - points[p1].x;
-        float wy = points[i].y - points[p1].y;
-        float wz = points[i].z - points[p1].z;
-        
-        // Cross product magnitude gives distance
-        float cross_x = vy * wz - vz * wy;
-        float cross_y = vz * wx - vx * wz;
-        float cross_z = vx * wy - vy * wx;
-        float dist = sqrtf(cross_x * cross_x + cross_y * cross_y + cross_z * cross_z);
-        
-        if (dist > max_dist) {
-            max_dist = dist;
-            p3 = i;
-        }
-    }
-    
-    // Add the third point
-    convex_hull_add_vertex(hull, points[p3].x, points[p3].y, points[p3].z);
-    
-    // Create initial tetrahedron faces
-    convex_hull_add_face(hull, 0, 1, 2); // Front face
-    convex_hull_add_face(hull, 0, 2, 1); // Back face (opposite orientation)
-    
-    // Find the fourth point to complete the tetrahedron
-    max_dist = 0.0f;
-    unsigned int p4 = 0;
-    for (unsigned int i = 0; i < num_points; i++) {
-        if (i == p1 || i == p2 || i == p3) continue;
-        
-        // Check distance to the plane formed by the first three points
-        float vx = points[p2].x - points[p1].x;
-        float vy = points[p2].y - points[p1].y;
-        float vz = points[p2].z - points[p1].z;
-        
-        float wx = points[p3].x - points[p1].x;
-        float wy = points[p3].y - points[p1].y;
-        float wz = points[p3].z - points[p1].z;
-        
-        // Normal vector
-        float nx = vy * wz - vz * wy;
-        float ny = vz * wx - vx * wz;
-        float nz = vx * wy - vy * wx;
-        
-        // Distance from point to plane
-        float dx = points[i].x - points[p1].x;
-        float dy = points[i].y - points[p1].y;
-        float dz = points[i].z - points[p1].z;
-        
-        float dist = fabsf(nx * dx + ny * dy + nz * dz);
-        if (dist > max_dist) {
-            max_dist = dist;
-            p4 = i;
-        }
-    }
-    
-    // Add the fourth point
-    convex_hull_add_vertex(hull, points[p4].x, points[p4].y, points[p4].z);
-    
-    // Create the four faces of the tetrahedron
-    hull->num_faces = 0; // Reset faces
-    convex_hull_add_face(hull, 0, 1, 2);
-    convex_hull_add_face(hull, 0, 3, 1);
-    convex_hull_add_face(hull, 0, 2, 3);
-    convex_hull_add_face(hull, 1, 3, 2);
-    
-    // Now expand the hull by adding remaining points
-    for (unsigned int i = 0; i < num_points; i++) {
-        if (i == p1 || i == p2 || i == p3 || i == p4) continue;
-        
-        // Add this point to the hull
-        convex_hull_add_vertex(hull, points[i].x, points[i].y, points[i].z);
-        // Vertex added at index hull->num_vertices - 1
-        
-        // Find visible faces and create new faces
-        unsigned int* visible_faces = malloc(hull->num_faces * sizeof(unsigned int));
-        unsigned int num_visible = 0;
-        
-        for (unsigned int f = 0; f < hull->num_faces; f++) {
-            float dist = hull->faces[f].normal.x * points[i].x +
-                        hull->faces[f].normal.y * points[i].y +
-                        hull->faces[f].normal.z * points[i].z +
-                        hull->faces[f].d;
-            
-            if (dist > 0.001f) { // Point is outside this face
-                visible_faces[num_visible++] = f;
-            }
-        }
-        
-        if (num_visible > 0) {
-            // Remove visible faces and create new ones
-            // This is a simplified version - in practice, you'd need to handle edge cases
-            // and ensure proper face connectivity
-            
-            // For now, we'll just add the point and let the hull grow
-            // A full implementation would remove visible faces and create new ones
-            // connecting the new point to the boundary edges of visible faces
-        }
-        
-        free(visible_faces);
-    }
-    
-    return hull;
-}
-
-// Convex part operations
-convex_part_t* convex_part_create(unsigned int initial_capacity) {
-    convex_part_t* part = malloc(sizeof(convex_part_t));
-    if (!part) return NULL;
-    
-    part->triangle_indices = malloc(initial_capacity * sizeof(unsigned int));
-    if (!part->triangle_indices) {
-        free(part);
-        return NULL;
-    }
-    
-    part->num_triangles = 0;
-    part->capacity = initial_capacity;
-    part->volume = 0.0f;
-    part->center[0] = part->center[1] = part->center[2] = 0.0f;
-    
-    // Initialize hull
-    part->hull.vertices = NULL;
-    part->hull.num_vertices = 0;
-    part->hull.capacity = 0;
-    part->hull.faces = NULL;
-    part->hull.num_faces = 0;
-    part->hull.face_capacity = 0;
-    
-    return part;
-}
-
-void convex_part_free(convex_part_t* part) {
-    if (!part) return;
-    
-    if (part->triangle_indices) {
-        free(part->triangle_indices);
-    }
-    if (part->hull.vertices) {
-        free(part->hull.vertices);
-    }
-    if (part->hull.faces) {
-        free(part->hull.faces);
-    }
-    free(part);
-}
-
-void convex_part_add_triangle(convex_part_t* part, unsigned int triangle_index) {
-    if (!part) return;
-    
-    // Expand capacity if needed
-    if (part->num_triangles >= part->capacity) {
-        part->capacity *= 2;
-        part->triangle_indices = realloc(part->triangle_indices, part->capacity * sizeof(unsigned int));
-        if (!part->triangle_indices) return;
-    }
-    
-    part->triangle_indices[part->num_triangles] = triangle_index;
-    part->num_triangles++;
-}
-
-void convex_part_compute_properties(convex_part_t* part, const stl_file_t* stl) {
-    if (!part || !stl || part->num_triangles == 0) return;
-    
-    // Compute centroid
-    float total_x = 0.0f, total_y = 0.0f, total_z = 0.0f;
-    unsigned int total_vertices = 0;
-    
-    for (unsigned int i = 0; i < part->num_triangles; i++) {
-        unsigned int triangle_idx = part->triangle_indices[i];
-        const stl_triangle_t* triangle = &stl->triangles[triangle_idx];
-        
+    // Count shared vertices between the two triangles
+    for (int i = 0; i < 3; i++) {
         for (int j = 0; j < 3; j++) {
-            total_x += triangle->vertices[j][0];
-            total_y += triangle->vertices[j][1];
-            total_z += triangle->vertices[j][2];
-            total_vertices++;
-        }
-    }
-    
-    if (total_vertices > 0) {
-        part->center[0] = total_x / total_vertices;
-        part->center[1] = total_y / total_vertices;
-        part->center[2] = total_z / total_vertices;
-    }
-    
-    // Compute convex hull from all vertices
-    point3d_t* vertices = malloc(part->num_triangles * 3 * sizeof(point3d_t));
-    if (!vertices) return;
-    
-    unsigned int num_vertices = 0;
-    for (unsigned int i = 0; i < part->num_triangles; i++) {
-        unsigned int triangle_idx = part->triangle_indices[i];
-        const stl_triangle_t* triangle = &stl->triangles[triangle_idx];
-        
-        for (int j = 0; j < 3; j++) {
-            vertices[num_vertices].x = triangle->vertices[j][0];
-            vertices[num_vertices].y = triangle->vertices[j][1];
-            vertices[num_vertices].z = triangle->vertices[j][2];
-            num_vertices++;
-        }
-    }
-    
-    // Compute convex hull
-    convex_hull_t* hull = compute_convex_hull_3d(vertices, num_vertices, CONVEX_HULL_QUICKHULL);
-    if (hull) {
-        // Copy hull data to part
-        if (part->hull.vertices) free(part->hull.vertices);
-        if (part->hull.faces) free(part->hull.faces);
-        
-        part->hull.vertices = malloc(hull->num_vertices * sizeof(point3d_t));
-        part->hull.faces = malloc(hull->num_faces * sizeof(face_t));
-        
-        if (part->hull.vertices && part->hull.faces) {
-            memcpy(part->hull.vertices, hull->vertices, hull->num_vertices * sizeof(point3d_t));
-            memcpy(part->hull.faces, hull->faces, hull->num_faces * sizeof(face_t));
-            part->hull.num_vertices = hull->num_vertices;
-            part->hull.num_faces = hull->num_faces;
-            part->hull.capacity = hull->num_vertices;
-            part->hull.face_capacity = hull->num_faces;
+            float distance = sqrtf(
+                (tri1->vertices[i][0] - tri2->vertices[j][0]) * (tri1->vertices[i][0] - tri2->vertices[j][0]) +
+                (tri1->vertices[i][1] - tri2->vertices[j][1]) * (tri1->vertices[i][1] - tri2->vertices[j][1]) +
+                (tri1->vertices[i][2] - tri2->vertices[j][2]) * (tri1->vertices[i][2] - tri2->vertices[j][2])
+            );
             
-            // Copy bounds
-            memcpy(part->hull.bounds, hull->bounds, 6 * sizeof(float));
-        }
-        
-        convex_hull_free(hull);
-    }
-    
-    free(vertices);
-    
-    // Compute volume using convex hull
-    part->volume = compute_volume(&part->hull);
-}
-
-// Convex node operations
-convex_node_t* convex_node_create_leaf(unsigned int node_id, convex_part_t* part) {
-    convex_node_t* node = malloc(sizeof(convex_node_t));
-    if (!node) return NULL;
-    
-    node->type = CONVEX_LEAF;
-    node->node_id = node_id;
-    node->data.leaf.part = part;
-    
-    // Initialize bounds from part
-    if (part) {
-        memcpy(node->bounds, part->hull.bounds, 6 * sizeof(float));
-    } else {
-        node->bounds[0] = node->bounds[1] = node->bounds[2] = FLT_MAX;
-        node->bounds[3] = node->bounds[4] = node->bounds[5] = -FLT_MAX;
-    }
-    
-    node->concavity = 0.0f;
-    return node;
-}
-
-convex_node_t* convex_node_create_internal(unsigned int node_id, convex_node_t* left, convex_node_t* right) {
-    convex_node_t* node = malloc(sizeof(convex_node_t));
-    if (!node) return NULL;
-    
-    node->type = CONVEX_INTERNAL;
-    node->node_id = node_id;
-    node->data.internal.left = left;
-    node->data.internal.right = right;
-    
-    // Compute bounds from children
-    compute_convex_node_bounds(node);
-    
-    node->concavity = 0.0f;
-    return node;
-}
-
-void convex_node_free(convex_node_t* node) {
-    if (!node) return;
-    
-    if (node->type == CONVEX_LEAF) {
-        if (node->data.leaf.part) {
-            convex_part_free(node->data.leaf.part);
-        }
-    } else {
-        convex_node_free(node->data.internal.left);
-        convex_node_free(node->data.internal.right);
-    }
-    
-    free(node);
-}
-
-void compute_convex_node_bounds(convex_node_t* node) {
-    if (!node || node->type != CONVEX_INTERNAL) return;
-    
-    convex_node_t* left = node->data.internal.left;
-    convex_node_t* right = node->data.internal.right;
-    
-    if (!left || !right) return;
-    
-    // Compute union of children bounds
-    node->bounds[0] = fminf(left->bounds[0], right->bounds[0]);
-    node->bounds[1] = fminf(left->bounds[1], right->bounds[1]);
-    node->bounds[2] = fminf(left->bounds[2], right->bounds[2]);
-    node->bounds[3] = fmaxf(left->bounds[3], right->bounds[3]);
-    node->bounds[4] = fmaxf(left->bounds[4], right->bounds[4]);
-    node->bounds[5] = fmaxf(left->bounds[5], right->bounds[5]);
-}
-
-void convex_node_compute_concavity(convex_node_t* node, const stl_file_t* stl) {
-    if (!node) return;
-    
-    if (node->type == CONVEX_LEAF) {
-        if (node->data.leaf.part) {
-            node->concavity = compute_part_concavity(node->data.leaf.part, stl);
-        }
-    } else {
-        // For internal nodes, use average of children concavity
-        convex_node_compute_concavity(node->data.internal.left, stl);
-        convex_node_compute_concavity(node->data.internal.right, stl);
-        node->concavity = (node->data.internal.left->concavity + node->data.internal.right->concavity) / 2.0f;
-    }
-}
-
-// Adjacency operations
-adjacency_list_t* adjacency_list_create(unsigned int node_id, unsigned int initial_capacity) {
-    adjacency_list_t* list = malloc(sizeof(adjacency_list_t));
-    if (!list) return NULL;
-    
-    list->entries = malloc(initial_capacity * sizeof(adjacency_entry_t));
-    if (!list->entries) {
-        free(list);
-        return NULL;
-    }
-    
-    list->node_id = node_id;
-    list->num_adjacent = 0;
-    list->capacity = initial_capacity;
-    
-    return list;
-}
-
-void adjacency_list_free(adjacency_list_t* list) {
-    if (!list) return;
-    
-    if (list->entries) {
-        free(list->entries);
-    }
-    free(list);
-}
-
-void adjacency_list_add_entry(adjacency_list_t* list, unsigned int adjacent_node_id, 
-                             float overlap_volume, float distance) {
-    if (!list) return;
-    
-    // Expand capacity if needed
-    if (list->num_adjacent >= list->capacity) {
-        list->capacity *= 2;
-        list->entries = realloc(list->entries, list->capacity * sizeof(adjacency_entry_t));
-        if (!list->entries) return;
-    }
-    
-    list->entries[list->num_adjacent].node_id = adjacent_node_id;
-    list->entries[list->num_adjacent].overlap_volume = overlap_volume;
-    list->entries[list->num_adjacent].distance = distance;
-    list->num_adjacent++;
-}
-
-// Decomposition operations
-convex_decomposition_t* convex_decomposition_create(unsigned int initial_capacity) {
-    convex_decomposition_t* decomp = malloc(sizeof(convex_decomposition_t));
-    if (!decomp) return NULL;
-    
-    decomp->root = NULL;
-    decomp->num_nodes = 0;
-    decomp->num_leaf_nodes = 0;
-    decomp->max_depth = 0;
-    decomp->strategy = DECOMP_APPROX_CONVEX;
-    decomp->total_volume = 0.0f;
-    decomp->decomposition_quality = 0.0f;
-    
-    decomp->adjacency_lists = malloc(initial_capacity * sizeof(adjacency_list_t*));
-    if (!decomp->adjacency_lists) {
-        free(decomp);
-        return NULL;
-    }
-    
-    decomp->num_adjacency_lists = 0;
-    
-    return decomp;
-}
-
-void convex_decomposition_free(convex_decomposition_t* decomp) {
-    if (!decomp) return;
-    
-    if (decomp->root) {
-        convex_node_free(decomp->root);
-    }
-    
-    for (unsigned int i = 0; i < decomp->num_adjacency_lists; i++) {
-        if (decomp->adjacency_lists[i]) {
-            adjacency_list_free(decomp->adjacency_lists[i]);
-        }
-    }
-    
-    if (decomp->adjacency_lists) {
-        free(decomp->adjacency_lists);
-    }
-    
-    free(decomp);
-}
-
-// Main decomposition functions
-convex_decomposition_t* decompose_model(const stl_file_t* stl, const decomposition_params_t* params) {
-    if (!stl || !params) return NULL;
-    
-    switch (params->strategy) {
-        case DECOMP_APPROX_CONVEX:
-            return approximate_convex_decomposition(stl, params->max_parts, params->quality_threshold, params->concavity_tolerance);
-        case DECOMP_HIERARCHICAL:
-            return hierarchical_decomposition(stl, params->max_parts, params->quality_threshold);
-        case DECOMP_VOXEL_BASED:
-            return voxel_based_decomposition(stl, params->voxel_size, params->min_triangles_per_voxel);
-        default:
-            return approximate_convex_decomposition(stl, params->max_parts, params->quality_threshold, params->concavity_tolerance);
-    }
-}
-
-convex_decomposition_t* decompose_model_simple(const stl_file_t* stl, decomposition_strategy_t strategy,
-                                             unsigned int max_parts, float quality_threshold) {
-    if (!stl) return NULL;
-    
-    decomposition_params_t params = {
-        .strategy = strategy,
-        .max_parts = max_parts,
-        .quality_threshold = quality_threshold,
-        .concavity_tolerance = 0.1f,  // Default 10% concavity tolerance
-        .voxel_size = 1.0f,
-        .min_triangles_per_voxel = 10
-    };
-    
-    return decompose_model(stl, &params);
-}
-
-convex_decomposition_t* approximate_convex_decomposition(const stl_file_t* stl, 
-                                                        unsigned int max_parts, 
-                                                        float quality_threshold __attribute__((unused)),
-                                                        float concavity_tolerance) {
-    if (!stl || stl->num_triangles == 0) return NULL;
-    
-    convex_decomposition_t* decomp = convex_decomposition_create(max_parts);
-    if (!decomp) return NULL;
-    
-    decomp->strategy = DECOMP_APPROX_CONVEX;
-    
-    // Start with all triangles in one part
-    convex_part_t* initial_part = convex_part_create(stl->num_triangles);
-    if (!initial_part) {
-        convex_decomposition_free(decomp);
-        return NULL;
-    }
-    
-    // Add all triangles to the initial part
-    for (unsigned int i = 0; i < stl->num_triangles; i++) {
-        convex_part_add_triangle(initial_part, i);
-    }
-    convex_part_compute_properties(initial_part, stl);
-    
-    // Build hierarchical tree
-    unsigned int next_node_id = 0;
-    decomp->root = hierarchical_decompose_part(initial_part, stl, next_node_id++, max_parts, concavity_tolerance, &next_node_id);
-    
-    if (decomp->root) {
-        // Count nodes and compute properties
-        count_nodes_and_compute_properties(decomp->root, decomp);
-        
-        // Build adjacency lists
-        build_adjacency_lists(decomp);
-        
-        decomp->decomposition_quality = compute_decomposition_quality(decomp);
-    }
-    
-    return decomp;
-}
-
-// Hierarchical decomposition functions
-convex_node_t* hierarchical_decompose_part(convex_part_t* part, const stl_file_t* stl,
-                                          unsigned int node_id, unsigned int max_parts,
-                                          float concavity_tolerance, unsigned int* next_node_id) {
-    if (!part || !stl || !next_node_id) return NULL;
-    
-    // Compute concavity of current part
-    float concavity = compute_part_concavity(part, stl);
-    
-    // If concavity is within tolerance or we've reached max parts, create leaf node
-    if (concavity <= concavity_tolerance || *next_node_id >= max_parts) {
-        return convex_node_create_leaf(node_id, part);
-    }
-    
-    // Split the part along its longest axis
-    float dx = part->hull.bounds[3] - part->hull.bounds[0];
-    float dy = part->hull.bounds[4] - part->hull.bounds[1];
-    float dz = part->hull.bounds[5] - part->hull.bounds[2];
-    
-    int split_axis = 0; // X
-    if (dy > dx && dy > dz) split_axis = 1; // Y
-    else if (dz > dx && dz > dy) split_axis = 2; // Z
-    
-    float split_value = (part->hull.bounds[split_axis] + part->hull.bounds[split_axis + 3]) / 2.0f;
-    
-    // Create two new parts
-    convex_part_t* left_part = convex_part_create(part->num_triangles / 2);
-    convex_part_t* right_part = convex_part_create(part->num_triangles / 2);
-    
-    if (!left_part || !right_part) {
-        if (left_part) convex_part_free(left_part);
-        if (right_part) convex_part_free(right_part);
-        return convex_node_create_leaf(node_id, part);
-    }
-    
-    // Distribute triangles based on their centers
-    for (unsigned int i = 0; i < part->num_triangles; i++) {
-        unsigned int triangle_idx = part->triangle_indices[i];
-        const stl_triangle_t* triangle = &stl->triangles[triangle_idx];
-        
-        // Calculate triangle center
-        float center = (triangle->vertices[0][split_axis] + 
-                       triangle->vertices[1][split_axis] + 
-                       triangle->vertices[2][split_axis]) / 3.0f;
-        
-        if (center < split_value) {
-            convex_part_add_triangle(left_part, triangle_idx);
-        } else {
-            convex_part_add_triangle(right_part, triangle_idx);
-        }
-    }
-    
-    // Recursively decompose the split parts
-    convex_node_t* left_node = NULL;
-    convex_node_t* right_node = NULL;
-    
-    if (left_part->num_triangles > 0) {
-        convex_part_compute_properties(left_part, stl);
-        left_node = hierarchical_decompose_part(left_part, stl, (*next_node_id)++, max_parts, concavity_tolerance, next_node_id);
-    }
-    
-    if (right_part->num_triangles > 0) {
-        convex_part_compute_properties(right_part, stl);
-        right_node = hierarchical_decompose_part(right_part, stl, (*next_node_id)++, max_parts, concavity_tolerance, next_node_id);
-    }
-    
-    // If either child failed, return leaf node with original part
-    if (!left_node || !right_node) {
-        if (left_node) convex_node_free(left_node);
-        if (right_node) convex_node_free(right_node);
-        if (left_part) convex_part_free(left_part);
-        if (right_part) convex_part_free(right_part);
-        return convex_node_create_leaf(node_id, part);
-    }
-    
-    // Create internal node
-    convex_node_t* internal_node = convex_node_create_internal(node_id, left_node, right_node);
-    
-    // Free the original part since it's been split
-    convex_part_free(part);
-    
-    return internal_node;
-}
-
-void count_nodes_and_compute_properties(convex_node_t* node, convex_decomposition_t* decomp) {
-    if (!node || !decomp) return;
-    
-    decomp->num_nodes++;
-    
-    if (node->type == CONVEX_LEAF) {
-        decomp->num_leaf_nodes++;
-        if (node->data.leaf.part) {
-            decomp->total_volume += node->data.leaf.part->volume;
-        }
-    } else {
-        count_nodes_and_compute_properties(node->data.internal.left, decomp);
-        count_nodes_and_compute_properties(node->data.internal.right, decomp);
-    }
-}
-
-void build_adjacency_lists(convex_decomposition_t* decomp) {
-    if (!decomp || !decomp->root) return;
-    
-    // Allocate adjacency lists for all nodes
-    decomp->adjacency_lists = realloc(decomp->adjacency_lists, decomp->num_nodes * sizeof(adjacency_list_t*));
-    if (!decomp->adjacency_lists) return;
-    
-    // Initialize adjacency lists for all nodes
-    for (unsigned int i = 0; i < decomp->num_nodes; i++) {
-        decomp->adjacency_lists[i] = NULL;
-    }
-    
-    // Build adjacency lists for leaf nodes only
-    build_adjacency_for_leaf_nodes(decomp->root, decomp);
-}
-
-void build_adjacency_for_leaf_nodes(convex_node_t* node, convex_decomposition_t* decomp) {
-    if (!node || !decomp) return;
-    
-    if (node->type == CONVEX_LEAF) {
-        // Create adjacency list for this leaf node
-        adjacency_list_t* list = adjacency_list_create(node->node_id, 10);
-        if (list) {
-            decomp->adjacency_lists[decomp->num_adjacency_lists++] = list;
-            
-            // Check adjacency with all other leaf nodes
-            check_adjacency_with_other_leaves(node, decomp->root, list, decomp);
-        }
-    } else {
-        build_adjacency_for_leaf_nodes(node->data.internal.left, decomp);
-        build_adjacency_for_leaf_nodes(node->data.internal.right, decomp);
-    }
-}
-
-void check_adjacency_with_other_leaves(convex_node_t* current_node, convex_node_t* other_node, 
-                                      adjacency_list_t* list, convex_decomposition_t* decomp) {
-    if (!current_node || !other_node || !list || current_node == other_node) return;
-    
-    if (other_node->type == CONVEX_LEAF) {
-        // Check if these leaf nodes are adjacent
-        if (hulls_intersect(&current_node->data.leaf.part->hull, &other_node->data.leaf.part->hull)) {
-            float overlap_volume = compute_overlap_volume(&current_node->data.leaf.part->hull, &other_node->data.leaf.part->hull);
-            float distance = compute_hull_distance(&current_node->data.leaf.part->hull, &other_node->data.leaf.part->hull);
-            
-            adjacency_list_add_entry(list, other_node->node_id, overlap_volume, distance);
-        }
-    } else {
-        // Recursively check children
-        check_adjacency_with_other_leaves(current_node, other_node->data.internal.left, list, decomp);
-        check_adjacency_with_other_leaves(current_node, other_node->data.internal.right, list, decomp);
-    }
-}
-
-// Utility functions
-float compute_volume(const convex_hull_t* hull) {
-    if (!hull || hull->num_vertices < 4 || hull->num_faces == 0) return 0.0f;
-    
-    // Compute volume using the convex hull faces
-    // Volume = (1/6) * sum of signed volumes of tetrahedra formed by origin and each face
-    float volume = 0.0f;
-    
-    for (unsigned int i = 0; i < hull->num_faces; i++) {
-        const face_t* face = &hull->faces[i];
-        const point3d_t* v1 = &hull->vertices[face->vertices[0]];
-        const point3d_t* v2 = &hull->vertices[face->vertices[1]];
-        const point3d_t* v3 = &hull->vertices[face->vertices[2]];
-        
-        // Compute signed volume of tetrahedron (0, v1, v2, v3)
-        // Volume = (1/6) * dot(v1, cross(v2, v3))
-        float ux = v2->x - v1->x;
-        float uy = v2->y - v1->y;
-        float uz = v2->z - v1->z;
-        
-        float vx = v3->x - v1->x;
-        float vy = v3->y - v1->y;
-        float vz = v3->z - v1->z;
-        
-        float cross_x = uy * vz - uz * vy;
-        float cross_y = uz * vx - ux * vz;
-        float cross_z = ux * vy - uy * vx;
-        
-        float signed_volume = (v1->x * cross_x + v1->y * cross_y + v1->z * cross_z) / 6.0f;
-        volume += signed_volume;
-    }
-    
-    return fabsf(volume);
-}
-
-float compute_centroid(const convex_hull_t* hull, float* center) {
-    if (!hull || !center || hull->num_vertices == 0) return 0.0f;
-    
-    center[0] = (hull->bounds[0] + hull->bounds[3]) / 2.0f;
-    center[1] = (hull->bounds[1] + hull->bounds[4]) / 2.0f;
-    center[2] = (hull->bounds[2] + hull->bounds[5]) / 2.0f;
-    
-    return 1.0f;
-}
-
-float compute_decomposition_quality(const convex_decomposition_t* decomp) {
-    if (!decomp || decomp->num_leaf_nodes == 0) return 0.0f;
-    
-    // Simple quality metric based on part distribution
-    float avg_volume = decomp->total_volume / decomp->num_leaf_nodes;
-    float variance = 0.0f;
-    
-    // Collect volumes from leaf nodes
-    float* volumes = malloc(decomp->num_leaf_nodes * sizeof(float));
-    if (!volumes) return 0.0f;
-    
-    unsigned int leaf_index = 0;
-    collect_leaf_volumes(decomp->root, volumes, &leaf_index);
-    
-    for (unsigned int i = 0; i < decomp->num_leaf_nodes; i++) {
-        float diff = volumes[i] - avg_volume;
-        variance += diff * diff;
-    }
-    variance /= decomp->num_leaf_nodes;
-    
-    free(volumes);
-    
-    // Quality is inversely proportional to variance
-    float quality = 1.0f / (1.0f + variance);
-    return quality;
-}
-
-void collect_leaf_volumes(convex_node_t* node, float* volumes, unsigned int* index) {
-    if (!node || !volumes || !index) return;
-    
-    if (node->type == CONVEX_LEAF) {
-        if (node->data.leaf.part) {
-            volumes[*index] = node->data.leaf.part->volume;
-            (*index)++;
-        }
-    } else {
-        collect_leaf_volumes(node->data.internal.left, volumes, index);
-        collect_leaf_volumes(node->data.internal.right, volumes, index);
-    }
-}
-
-// Analysis and visualization
-void print_decomposition_info_to_file(const convex_decomposition_t* decomp, FILE* file) {
-    if (!decomp || !file) return;
-    
-    fprintf(file, "Convex Decomposition Information:\n");
-    fprintf(file, "Strategy: %d\n", decomp->strategy);
-    fprintf(file, "Number of nodes: %u\n", decomp->num_nodes);
-    fprintf(file, "Number of leaf nodes: %u\n", decomp->num_leaf_nodes);
-    fprintf(file, "Total volume: %.3f\n", decomp->total_volume);
-    fprintf(file, "Decomposition quality: %.3f\n", decomp->decomposition_quality);
-    fprintf(file, "\n");
-    
-    if (decomp->root) {
-        print_convex_node_info_to_file(decomp->root, 0, file);
-    }
-    
-    // Print adjacency information
-    fprintf(file, "Adjacency Information:\n");
-    for (unsigned int i = 0; i < decomp->num_adjacency_lists; i++) {
-        if (decomp->adjacency_lists[i]) {
-            fprintf(file, "Node %u has %u adjacent nodes:\n", 
-                   decomp->adjacency_lists[i]->node_id, 
-                   decomp->adjacency_lists[i]->num_adjacent);
-            
-            for (unsigned int j = 0; j < decomp->adjacency_lists[i]->num_adjacent; j++) {
-                adjacency_entry_t* entry = &decomp->adjacency_lists[i]->entries[j];
-                fprintf(file, "  -> Node %u (overlap: %.3f, distance: %.3f)\n", 
-                       entry->node_id, entry->overlap_volume, entry->distance);
+            if (distance < EPSILON) {
+                shared_vertices++;
+                break; // Don't count the same vertex multiple times
             }
-            fprintf(file, "\n");
         }
     }
-}
-
-void print_decomposition_info(const convex_decomposition_t* decomp) {
-    print_decomposition_info_to_file(decomp, stdout);
-}
-
-void print_convex_node_info_to_file(const convex_node_t* node, unsigned int depth, FILE* file) {
-    if (!node || !file) return;
     
-    // Print indentation
-    for (unsigned int i = 0; i < depth; i++) {
-        fprintf(file, "  ");
-    }
-    
-    fprintf(file, "Node %u (", node->node_id);
-    
-    if (node->type == CONVEX_LEAF) {
-        fprintf(file, "LEAF");
-        if (node->data.leaf.part) {
-            fprintf(file, ", triangles: %u, volume: %.3f", 
-                   node->data.leaf.part->num_triangles, 
-                   node->data.leaf.part->volume);
-        }
-    } else {
-        fprintf(file, "INTERNAL");
-    }
-    
-    fprintf(file, ", concavity: %.3f", node->concavity);
-    fprintf(file, ")\n");
-    
-    if (node->type == CONVEX_INTERNAL) {
-        print_convex_node_info_to_file(node->data.internal.left, depth + 1, file);
-        print_convex_node_info_to_file(node->data.internal.right, depth + 1, file);
-    }
+    // Triangles are connected if they share at least 2 vertices (an edge)
+    return shared_vertices >= 2;
 }
 
-void print_convex_node_info(const convex_node_t* node, unsigned int depth) {
-    print_convex_node_info_to_file(node, depth, stdout);
-}
-
-void print_part_info_to_file(const convex_part_t* part, unsigned int part_index, FILE* file) {
-    if (!part || !file) return;
-    
-    fprintf(file, "Part %u:\n", part_index);
-    fprintf(file, "  Triangles: %u\n", part->num_triangles);
-    fprintf(file, "  Volume: %.3f\n", part->volume);
-    fprintf(file, "  Center: (%.3f, %.3f, %.3f)\n", part->center[0], part->center[1], part->center[2]);
-    fprintf(file, "  Bounds: X[%.3f, %.3f] Y[%.3f, %.3f] Z[%.3f, %.3f]\n",
-           part->hull.bounds[0], part->hull.bounds[3],
-           part->hull.bounds[1], part->hull.bounds[4],
-           part->hull.bounds[2], part->hull.bounds[5]);
-    fprintf(file, "\n");
-}
-
-void print_part_info(const convex_part_t* part, unsigned int part_index) {
-    print_part_info_to_file(part, part_index, stdout);
-}
-
-// Geometry utilities
-float cross_product_2d(float x1, float y1, float x2, float y2) {
-    return x1 * y2 - x2 * y1;
-}
-
-float dot_product_3d(float x1, float y1, float z1, float x2, float y2, float z2) {
-    return x1 * x2 + y1 * y2 + z1 * z2;
-}
-
-float distance_3d(float x1, float y1, float z1, float x2, float y2, float z2) {
-    float dx = x2 - x1;
-    float dy = y2 - y1;
-    float dz = z2 - z1;
-    return sqrtf(dx * dx + dy * dy + dz * dz);
-}
-
-int orientation_2d(float x1, float y1, float x2, float y2, float x3, float y3) {
-    float val = (y2 - y1) * (x3 - x2) - (x2 - x1) * (y3 - y2);
-    if (val > 0) return 1;   // Clockwise
-    if (val < 0) return -1;  // Counter-clockwise
-    return 0;                // Collinear
-}
-
-convex_decomposition_t* hierarchical_decomposition(const stl_file_t* stl, 
-                                                  unsigned int max_depth,
-                                                  float split_threshold) {
-    if (!stl || stl->num_triangles == 0) return NULL;
-    
-    convex_decomposition_t* decomp = convex_decomposition_create(1 << max_depth);
-    if (!decomp) return NULL;
-    
-    decomp->strategy = DECOMP_HIERARCHICAL;
-    
-    // Start with all triangles in one part
-    convex_part_t* initial_part = convex_part_create(stl->num_triangles);
-    if (!initial_part) {
-        convex_decomposition_free(decomp);
+// Find connected components in a mesh using flood-fill algorithm
+connected_component_t* find_connected_components(const stl_file_t* mesh, int* num_components) {
+    if (!mesh || mesh->num_triangles == 0) {
+        *num_components = 0;
         return NULL;
     }
     
-    for (unsigned int i = 0; i < stl->num_triangles; i++) {
-        convex_part_add_triangle(initial_part, i);
-    }
-    convex_part_compute_properties(initial_part, stl);
-    
-    // Build hierarchical tree
-    unsigned int next_node_id = 0;
-    decomp->root = hierarchical_decompose_part(initial_part, stl, next_node_id++, 1 << max_depth, split_threshold, &next_node_id);
-    
-    if (decomp->root) {
-        // Count nodes and compute properties
-        count_nodes_and_compute_properties(decomp->root, decomp);
-        
-        // Build adjacency lists
-        build_adjacency_lists(decomp);
-        
-        decomp->decomposition_quality = compute_decomposition_quality(decomp);
-    }
-    
-    return decomp;
-}
-
-convex_decomposition_t* voxel_based_decomposition(const stl_file_t* stl, 
-                                                 float voxel_size,
-                                                 unsigned int min_triangles_per_voxel) {
-    if (!stl || stl->num_triangles == 0 || voxel_size <= 0) return NULL;
-    
-    convex_decomposition_t* decomp = convex_decomposition_create(100);
-    if (!decomp) return NULL;
-    
-    decomp->strategy = DECOMP_VOXEL_BASED;
-    
-    // Calculate voxel grid dimensions
-    float min_x = stl->bounds[0], max_x = stl->bounds[3];
-    float min_y = stl->bounds[1], max_y = stl->bounds[4];
-    float min_z = stl->bounds[2], max_z = stl->bounds[5];
-    
-    int num_voxels_x = (int)((max_x - min_x) / voxel_size) + 1;
-    int num_voxels_y = (int)((max_y - min_y) / voxel_size) + 1;
-    int num_voxels_z = (int)((max_z - min_z) / voxel_size) + 1;
-    
-    // Create voxel grid
-    unsigned int*** voxel_grid = malloc(num_voxels_x * sizeof(unsigned int**));
-    if (!voxel_grid) {
-        convex_decomposition_free(decomp);
+    // Performance safeguard: skip component analysis for very large meshes
+    if (mesh->num_triangles > 1000) {
+        printf("Mesh too large (%u triangles) for component analysis, skipping\n", mesh->num_triangles);
+        *num_components = 1; // Assume single component
         return NULL;
     }
     
-    for (int x = 0; x < num_voxels_x; x++) {
-        voxel_grid[x] = malloc(num_voxels_y * sizeof(unsigned int*));
-        if (!voxel_grid[x]) {
-            // Cleanup
-            for (int i = 0; i < x; i++) {
-                for (int y = 0; y < num_voxels_y; y++) {
-                    if (voxel_grid[i][y]) free(voxel_grid[i][y]);
-                }
-                free(voxel_grid[i]);
+    *num_components = 0;
+    int* visited = calloc(mesh->num_triangles, sizeof(int));
+    if (!visited) return NULL;
+    
+    // Allocate space for components (worst case: every triangle is separate)
+    connected_component_t* components = malloc(mesh->num_triangles * sizeof(connected_component_t));
+    if (!components) {
+        free(visited);
+        return NULL;
+    }
+    
+    for (unsigned int i = 0; i < mesh->num_triangles; i++) {
+        if (visited[i]) continue;
+        
+        // Start new component
+        connected_component_t* current_component = &components[*num_components];
+        current_component->capacity = 16;
+        current_component->triangle_indices = malloc(current_component->capacity * sizeof(int));
+        current_component->count = 0;
+        
+        if (!current_component->triangle_indices) {
+            // Cleanup on failure
+            for (int j = 0; j < *num_components; j++) {
+                free(components[j].triangle_indices);
             }
-            free(voxel_grid);
-            convex_decomposition_free(decomp);
+            free(components);
+            free(visited);
             return NULL;
         }
         
-        for (int y = 0; y < num_voxels_y; y++) {
-            voxel_grid[x][y] = calloc(num_voxels_z, sizeof(unsigned int));
-            if (!voxel_grid[x][y]) {
-                // Cleanup
-                for (int i = 0; i < x; i++) {
-                    for (int j = 0; j < num_voxels_y; j++) {
-                        if (voxel_grid[i][j]) free(voxel_grid[i][j]);
-                    }
-                    free(voxel_grid[i]);
+        // Flood-fill to find all connected triangles
+        int* stack = malloc(mesh->num_triangles * sizeof(int));
+        if (!stack) {
+            free(current_component->triangle_indices);
+            for (int j = 0; j < *num_components; j++) {
+                free(components[j].triangle_indices);
+            }
+            free(components);
+            free(visited);
+            return NULL;
+        }
+        
+        int stack_size = 0;
+        stack[stack_size++] = i;
+        
+        while (stack_size > 0) {
+            int current_triangle = stack[--stack_size];
+            if (visited[current_triangle]) continue;
+            
+            visited[current_triangle] = 1;
+            
+            // Add to current component
+            if (current_component->count >= current_component->capacity) {
+                current_component->capacity *= 2;
+                current_component->triangle_indices = realloc(current_component->triangle_indices, 
+                                                            current_component->capacity * sizeof(int));
+            }
+            current_component->triangle_indices[current_component->count++] = current_triangle;
+            
+            // Check all other unvisited triangles for connectivity
+            for (unsigned int j = 0; j < mesh->num_triangles; j++) {
+                if (!visited[j] && triangles_are_connected(&mesh->triangles[current_triangle], &mesh->triangles[j])) {
+                    stack[stack_size++] = j;
                 }
-                for (int j = 0; j < y; j++) {
-                    if (voxel_grid[x][j]) free(voxel_grid[x][j]);
-                }
-                free(voxel_grid[x]);
-                free(voxel_grid);
-                convex_decomposition_free(decomp);
-                return NULL;
+            }
+        }
+        
+        free(stack);
+        (*num_components)++;
+    }
+    
+    free(visited);
+    return components;
+}
+
+// Create a submesh from a connected component
+stl_file_t* create_submesh_from_component(const stl_file_t* original_mesh, const connected_component_t* component) {
+    if (!original_mesh || !component || component->count == 0) {
+        return NULL;
+    }
+    
+    stl_file_t* submesh = malloc(sizeof(stl_file_t));
+    if (!submesh) return NULL;
+    
+    // Copy header
+    memcpy(submesh->header, original_mesh->header, 80);
+    submesh->num_triangles = component->count;
+    
+    // Allocate triangles
+    submesh->triangles = malloc(submesh->num_triangles * sizeof(stl_triangle_t));
+    if (!submesh->triangles) {
+        free(submesh);
+        return NULL;
+    }
+    
+    // Copy triangles from component
+    for (int i = 0; i < component->count; i++) {
+        int triangle_index = component->triangle_indices[i];
+        
+        // Bounds check
+        if (triangle_index < 0 || triangle_index >= (int)original_mesh->num_triangles) {
+            printf("ERROR: Invalid triangle index %d (mesh has %u triangles)\n", 
+                   triangle_index, original_mesh->num_triangles);
+            free(submesh->triangles);
+            free(submesh);
+            return NULL;
+        }
+        
+        memcpy(&submesh->triangles[i], &original_mesh->triangles[triangle_index], sizeof(stl_triangle_t));
+    }
+    
+    return submesh;
+}
+
+// Structure to represent a separation plane between components
+typedef struct {
+    float point[3];     // A point on the plane
+    float normal[3];    // Plane normal vector
+    float distance;     // Distance between component centroids
+    int is_valid;       // 1 if this is a valid separation plane
+} separation_plane_t;
+
+// Calculate the centroid of a connected component
+void calculate_component_centroid(const stl_file_t* mesh, const connected_component_t* component, float* centroid) {
+    centroid[0] = centroid[1] = centroid[2] = 0.0f;
+    int vertex_count = 0;
+    
+    for (int i = 0; i < component->count; i++) {
+        int triangle_idx = component->triangle_indices[i];
+        if (triangle_idx >= 0 && triangle_idx < (int)mesh->num_triangles) {
+            const stl_triangle_t* triangle = &mesh->triangles[triangle_idx];
+            
+            for (int j = 0; j < 3; j++) {
+                centroid[0] += triangle->vertices[j][0];
+                centroid[1] += triangle->vertices[j][1];
+                centroid[2] += triangle->vertices[j][2];
+                vertex_count++;
             }
         }
     }
     
-    // Assign triangles to voxels
+    if (vertex_count > 0) {
+        centroid[0] /= vertex_count;
+        centroid[1] /= vertex_count;
+        centroid[2] /= vertex_count;
+    }
+}
+
+// Find the optimal separation plane between two connected components
+separation_plane_t find_separation_plane(const stl_file_t* mesh, 
+                                        const connected_component_t* comp1, 
+                                        const connected_component_t* comp2) {
+    separation_plane_t result = {0};
+    result.is_valid = 0;
+    
+    if (!mesh || !comp1 || !comp2 || comp1->count == 0 || comp2->count == 0) {
+        return result;
+    }
+    
+    // Calculate centroids of both components
+    float centroid1[3], centroid2[3];
+    calculate_component_centroid(mesh, comp1, centroid1);
+    calculate_component_centroid(mesh, comp2, centroid2);
+    
+    // Calculate the vector between centroids
+    float separation_vector[3] = {
+        centroid2[0] - centroid1[0],
+        centroid2[1] - centroid1[1],
+        centroid2[2] - centroid1[2]
+    };
+    
+    // Calculate distance between centroids
+    result.distance = sqrtf(
+        separation_vector[0] * separation_vector[0] +
+        separation_vector[1] * separation_vector[1] +
+        separation_vector[2] * separation_vector[2]
+    );
+    
+    if (result.distance < 1e-6f) {
+        // Components are too close or overlapping
+        return result;
+    }
+    
+    // Normalize the separation vector to get the plane normal
+    result.normal[0] = separation_vector[0] / result.distance;
+    result.normal[1] = separation_vector[1] / result.distance;
+    result.normal[2] = separation_vector[2] / result.distance;
+    
+    // Place the plane at the midpoint between centroids
+    result.point[0] = (centroid1[0] + centroid2[0]) / 2.0f;
+    result.point[1] = (centroid1[1] + centroid2[1]) / 2.0f;
+    result.point[2] = (centroid1[2] + centroid2[2]) / 2.0f;
+    
+    printf("Separation plane: point=(%.3f,%.3f,%.3f), normal=(%.3f,%.3f,%.3f), distance=%.3f\n",
+           result.point[0], result.point[1], result.point[2],
+           result.normal[0], result.normal[1], result.normal[2], result.distance);
+    
+    result.is_valid = 1;
+    return result;
+}
+
+// Ray-triangle intersection using Möller-Trumbore algorithm
+// Returns 1 if intersection found, 0 otherwise
+// Sets t, u, v as barycentric coordinates if intersection found
+int ray_triangle_intersect(const float* ray_origin, const float* ray_direction,
+                          const float* v0, const float* v1, const float* v2,
+                          float* t, float* u, float* v) {
+    const float EPSILON = 1e-8f;
+    
+    // Calculate two edges of the triangle
+    float edge1[3] = {v1[0] - v0[0], v1[1] - v0[1], v1[2] - v0[2]};
+    float edge2[3] = {v2[0] - v0[0], v2[1] - v0[1], v2[2] - v0[2]};
+    
+    // Calculate cross product of ray direction and edge2
+    float h[3] = {
+        ray_direction[1] * edge2[2] - ray_direction[2] * edge2[1],
+        ray_direction[2] * edge2[0] - ray_direction[0] * edge2[2],
+        ray_direction[0] * edge2[1] - ray_direction[1] * edge2[0]
+    };
+    
+    // Calculate determinant
+    float a = edge1[0] * h[0] + edge1[1] * h[1] + edge1[2] * h[2];
+    
+    if (a > -EPSILON && a < EPSILON) {
+        return 0; // Ray is parallel to triangle
+    }
+    
+    float f = 1.0f / a;
+    float s[3] = {ray_origin[0] - v0[0], ray_origin[1] - v0[1], ray_origin[2] - v0[2]};
+    
+    *u = f * (s[0] * h[0] + s[1] * h[1] + s[2] * h[2]);
+    if (*u < 0.0f || *u > 1.0f) {
+        return 0;
+    }
+    
+    float q[3] = {
+        s[1] * edge1[2] - s[2] * edge1[1],
+        s[2] * edge1[0] - s[0] * edge1[2],
+        s[0] * edge1[1] - s[1] * edge1[0]
+    };
+    
+    *v = f * (ray_direction[0] * q[0] + ray_direction[1] * q[1] + ray_direction[2] * q[2]);
+    if (*v < 0.0f || *u + *v > 1.0f) {
+        return 0;
+    }
+    
+    *t = f * (edge2[0] * q[0] + edge2[1] * q[1] + edge2[2] * q[2]);
+    
+    return (*t > EPSILON); // Intersection found
+}
+
+// Mesh structure (if needed for other functions)
+typedef struct {
+    // vertices vector<Vertex>;
+    // faces vector<Face>;
+    float concavity_threshold;
+} mesh;
+
+// Helper function to update tree statistics
+void update_tree_stats(decomposition_tree_t* tree, mesh_tree_node_t* node) {
+    if (!tree || !node) return;
+    
+    tree->total_nodes++;
+    if (node->depth > tree->max_depth_reached) {
+        tree->max_depth_reached = node->depth;
+    }
+    if (node->is_leaf) {
+        tree->leaf_nodes++;
+    }
+}
+
+int check_concavity(const stl_file_t* stl, concavity_result_t* result) {
+    if (!stl || stl->num_triangles == 0 || !result) {
+        return 0; // Invalid input
+    }
+    
+    // Initialize result structure
+    result->concavity_score = 0.0f;
+    result->worst_point_1[0] = result->worst_point_1[1] = result->worst_point_1[2] = 0.0f;
+    result->worst_point_2[0] = result->worst_point_2[1] = result->worst_point_2[2] = 0.0f;
+    result->worst_point_3[0] = result->worst_point_3[1] = result->worst_point_3[2] = 0.0f;
+    result->worst_triangle_index_1 = -1;
+    result->worst_triangle_index_2 = -1;
+    result->worst_triangle_index_3 = -1;
+    
+    // For very small meshes, assume convex
+    if (stl->num_triangles < 4) {
+        result->concavity_score = 1.0f;
+        return 1;
+    }
+    
+    // Calculate mesh center point
+    float center[3] = {0.0f, 0.0f, 0.0f};
+    int vertex_count = 0;
+    
+    for (unsigned int i = 0; i < stl->num_triangles; i++) {
+        for (int j = 0; j < 3; j++) {
+            center[0] += stl->triangles[i].vertices[j][0];
+            center[1] += stl->triangles[i].vertices[j][1];
+            center[2] += stl->triangles[i].vertices[j][2];
+            vertex_count++;
+        }
+    }
+    
+    center[0] /= vertex_count;
+    center[1] /= vertex_count;
+    center[2] /= vertex_count;
+    
+    // ROBUST GEOMETRY-BASED CONCAVITY DETECTION
+    // Instead of relying on unreliable STL normals, use geometric convexity tests
+    
+    float worst_concavity_1 = 0.0f;  // Worst concavity score (higher = more concave)
+    float worst_concavity_2 = 0.0f;  // Second worst
+    float worst_concavity_3 = 0.0f;  // Third worst
+    int total_samples = 0;
+    int convex_samples = 0;
+    
+    // Sample triangles and test geometric convexity using ray-casting approach
     for (unsigned int i = 0; i < stl->num_triangles; i++) {
         const stl_triangle_t* triangle = &stl->triangles[i];
         
-        // Calculate triangle center
-        float center_x = (triangle->vertices[0][0] + triangle->vertices[1][0] + triangle->vertices[2][0]) / 3.0f;
-        float center_y = (triangle->vertices[0][1] + triangle->vertices[1][1] + triangle->vertices[2][1]) / 3.0f;
-        float center_z = (triangle->vertices[0][2] + triangle->vertices[1][2] + triangle->vertices[2][2]) / 3.0f;
+        // Calculate triangle centroid
+        float centroid[3] = {
+            (triangle->vertices[0][0] + triangle->vertices[1][0] + triangle->vertices[2][0]) / 3.0f,
+            (triangle->vertices[0][1] + triangle->vertices[1][1] + triangle->vertices[2][1]) / 3.0f,
+            (triangle->vertices[0][2] + triangle->vertices[1][2] + triangle->vertices[2][2]) / 3.0f
+        };
         
-        int voxel_x = (int)((center_x - min_x) / voxel_size);
-        int voxel_y = (int)((center_y - min_y) / voxel_size);
-        int voxel_z = (int)((center_z - min_z) / voxel_size);
+        // Calculate distance from centroid to mesh center
+        float center_distance = sqrtf(
+            (centroid[0] - center[0]) * (centroid[0] - center[0]) +
+            (centroid[1] - center[1]) * (centroid[1] - center[1]) +
+            (centroid[2] - center[2]) * (centroid[2] - center[2])
+        );
         
-        if (voxel_x >= 0 && voxel_x < num_voxels_x &&
-            voxel_y >= 0 && voxel_y < num_voxels_y &&
-            voxel_z >= 0 && voxel_z < num_voxels_z) {
-            voxel_grid[voxel_x][voxel_y][voxel_z]++;
+        if (center_distance < 1e-6f) continue; // Skip if too close to center
+        
+        // Test concavity by checking how "inward" this point is relative to other geometry
+        // Count how many other triangles are between this point and the mesh center
+        float ray_direction[3] = {
+            (center[0] - centroid[0]) / center_distance,
+            (center[1] - centroid[1]) / center_distance,
+            (center[2] - centroid[2]) / center_distance
+        };
+        
+        int ray_intersections = 0;
+        
+        // Cast ray from centroid toward center and count intersections
+        for (unsigned int j = 0; j < stl->num_triangles; j++) {
+            if (i == j) continue; // Skip self
+            
+            const stl_triangle_t* other = &stl->triangles[j];
+            
+            // Simple ray-triangle intersection test
+            // If ray intersects another triangle, this point is more "inside" (concave)
+            float t, u, v;
+            if (ray_triangle_intersect(centroid, ray_direction, 
+                                     other->vertices[0], other->vertices[1], other->vertices[2],
+                                     &t, &u, &v)) {
+                if (t > 1e-6f && t < center_distance) { // Valid intersection between centroid and center
+                    ray_intersections++;
+                    if (ray_intersections >= 3) break; // Limit to avoid excessive computation
+                }
+            }
+        }
+        
+        // Concavity score: more intersections = more concave
+        // Normalize by distance to handle scale variations
+        float concavity = (float)ray_intersections / (center_distance + 1.0f);
+        
+        total_samples++;
+        
+        // Optional debug: Print concavity for first few triangles
+        /*if (i < 5) {
+            printf("Triangle %d: concavity=%.3f, intersections=%d, centroid=(%.3f,%.3f,%.3f)\n",
+                   i, concavity, ray_intersections, centroid[0], centroid[1], centroid[2]);
+        }*/
+        
+        // Ensure spatial diversity - don't select points too close to existing ones
+        float min_distance_1 = sqrtf(
+            (centroid[0] - result->worst_point_1[0]) * (centroid[0] - result->worst_point_1[0]) +
+            (centroid[1] - result->worst_point_1[1]) * (centroid[1] - result->worst_point_1[1]) +
+            (centroid[2] - result->worst_point_1[2]) * (centroid[2] - result->worst_point_1[2])
+        );
+        float min_distance_2 = sqrtf(
+            (centroid[0] - result->worst_point_2[0]) * (centroid[0] - result->worst_point_2[0]) +
+            (centroid[1] - result->worst_point_2[1]) * (centroid[1] - result->worst_point_2[1]) +
+            (centroid[2] - result->worst_point_2[2]) * (centroid[2] - result->worst_point_2[2])
+        );
+        
+        const float MIN_SPATIAL_DISTANCE = 0.5f; // Minimum distance between worst points
+        
+        // Track the three worst (most concave) points with spatial diversity
+        if (concavity > worst_concavity_1) {
+            // New worst point found - shift previous worst to second and third place
+            worst_concavity_3 = worst_concavity_2;
+            result->worst_point_3[0] = result->worst_point_2[0];
+            result->worst_point_3[1] = result->worst_point_2[1];
+            result->worst_point_3[2] = result->worst_point_2[2];
+            result->worst_triangle_index_3 = result->worst_triangle_index_2;
+            
+            worst_concavity_2 = worst_concavity_1;
+            result->worst_point_2[0] = result->worst_point_1[0];
+            result->worst_point_2[1] = result->worst_point_1[1];
+            result->worst_point_2[2] = result->worst_point_1[2];
+            result->worst_triangle_index_2 = result->worst_triangle_index_1;
+            
+            // Update the new worst
+            worst_concavity_1 = concavity;
+            result->worst_point_1[0] = centroid[0];
+            result->worst_point_1[1] = centroid[1];
+            result->worst_point_1[2] = centroid[2];
+            result->worst_triangle_index_1 = (int)i;
+        } else if (concavity > worst_concavity_2 && min_distance_1 >= MIN_SPATIAL_DISTANCE) {
+            // New second worst point found - shift previous second worst to third place
+            worst_concavity_3 = worst_concavity_2;
+            result->worst_point_3[0] = result->worst_point_2[0];
+            result->worst_point_3[1] = result->worst_point_2[1];
+            result->worst_point_3[2] = result->worst_point_2[2];
+            result->worst_triangle_index_3 = result->worst_triangle_index_2;
+            
+            worst_concavity_2 = concavity;
+            result->worst_point_2[0] = centroid[0];
+            result->worst_point_2[1] = centroid[1];
+            result->worst_point_2[2] = centroid[2];
+            result->worst_triangle_index_2 = (int)i;
+        } else if (concavity > worst_concavity_3 && 
+                   min_distance_1 >= MIN_SPATIAL_DISTANCE && 
+                   min_distance_2 >= MIN_SPATIAL_DISTANCE) {
+            // New third worst point found
+            worst_concavity_3 = concavity;
+            result->worst_point_3[0] = centroid[0];
+            result->worst_point_3[1] = centroid[1];
+            result->worst_point_3[2] = centroid[2];
+            result->worst_triangle_index_3 = (int)i;
+        }
+        
+        // If low concavity, consider it convex-like
+        if (concavity < 0.1f) {
+            convex_samples++;
         }
     }
     
-    // Create parts for voxels with enough triangles
-    unsigned int next_node_id = 0;
-    for (int x = 0; x < num_voxels_x; x++) {
-        for (int y = 0; y < num_voxels_y; y++) {
-            for (int z = 0; z < num_voxels_z; z++) {
-                if (voxel_grid[x][y][z] >= min_triangles_per_voxel) {
-                    convex_part_t* part = convex_part_create(voxel_grid[x][y][z]);
-                    if (part) {
-                        // Add triangles from this voxel
-                        for (unsigned int i = 0; i < stl->num_triangles; i++) {
-                            const stl_triangle_t* triangle = &stl->triangles[i];
-                            float center_x = (triangle->vertices[0][0] + triangle->vertices[1][0] + triangle->vertices[2][0]) / 3.0f;
-                            float center_y = (triangle->vertices[0][1] + triangle->vertices[1][1] + triangle->vertices[2][1]) / 3.0f;
-                            float center_z = (triangle->vertices[0][2] + triangle->vertices[1][2] + triangle->vertices[2][2]) / 3.0f;
-                            
-                            int tri_voxel_x = (int)((center_x - min_x) / voxel_size);
-                            int tri_voxel_y = (int)((center_y - min_y) / voxel_size);
-                            int tri_voxel_z = (int)((center_z - min_z) / voxel_size);
-                            
-                            if (tri_voxel_x == x && tri_voxel_y == y && tri_voxel_z == z) {
-                                convex_part_add_triangle(part, i);
-                            }
-                        }
-                        
-                        if (part->num_triangles > 0) {
-                            convex_part_compute_properties(part, stl);
-                            // Create leaf node for this part
-                            convex_node_t* leaf_node = convex_node_create_leaf(next_node_id++, part);
-                            if (leaf_node) {
-                                // Add to tree (simplified - just store as root for now)
-                                if (!decomp->root) {
-                                    decomp->root = leaf_node;
-                                }
-                            }
-                        } else {
-                            convex_part_free(part);
-                        }
-                    }
+    if (total_samples == 0) {
+        result->concavity_score = 1.0f;
+        return 1;
+    }
+    
+    // Calculate the ratio of convex-like samples
+    float convexity_ratio = (float)convex_samples / (float)total_samples;
+    
+    // Debug: Print final worst points and their concavity scores
+    printf("DEBUG: Worst concavities: %.3f, %.3f, %.3f\n", worst_concavity_1, worst_concavity_2, worst_concavity_3);
+    printf("DEBUG: Convex samples: %d/%d (%.1f%%)\n", convex_samples, total_samples, convexity_ratio * 100.0f);
+    printf("DEBUG: Worst points:\n");
+    printf("  1: (%.3f, %.3f, %.3f) triangle %d\n", result->worst_point_1[0], result->worst_point_1[1], result->worst_point_1[2], result->worst_triangle_index_1);
+    printf("  2: (%.3f, %.3f, %.3f) triangle %d\n", result->worst_point_2[0], result->worst_point_2[1], result->worst_point_2[2], result->worst_triangle_index_2);
+    printf("  3: (%.3f, %.3f, %.3f) triangle %d\n", result->worst_point_3[0], result->worst_point_3[1], result->worst_point_3[2], result->worst_triangle_index_3);
+    
+    // Apply a smoothing function to make the metric more intuitive
+    // Use a power function to emphasize the difference between highly convex and concave meshes
+    result->concavity_score = convexity_ratio * convexity_ratio; // Square for smoothing
+    
+    return 1; // Success
+}
+
+// Helper function to calculate the signed distance from a point to a plane
+float point_plane_distance(const float* point, const float* plane_normal, const float* plane_point) {
+    float vec[3] = {
+        point[0] - plane_point[0],
+        point[1] - plane_point[1], 
+        point[2] - plane_point[2]
+    };
+    return vec[0] * plane_normal[0] + vec[1] * plane_normal[1] + vec[2] * plane_normal[2];
+}
+
+// Line-plane intersection function
+// Returns 1 if intersection found, 0 if line is parallel to plane
+int line_plane_intersection(const float* line_start, const float* line_end, 
+                           const float* plane_normal, const float* plane_point, 
+                           float* intersection_point) {
+    float line_dir[3] = {
+        line_end[0] - line_start[0],
+        line_end[1] - line_start[1],
+        line_end[2] - line_start[2]
+    };
+    
+    float denom = plane_normal[0] * line_dir[0] + 
+                  plane_normal[1] * line_dir[1] + 
+                  plane_normal[2] * line_dir[2];
+    
+    // Check if line is parallel to plane
+    if (fabs(denom) < 1e-6f) {
+        return 0;
+    }
+    
+    float t = point_plane_distance(plane_point, plane_normal, line_start) / denom;
+    
+    // Check if intersection is within the line segment
+    if (t < 0.0f || t > 1.0f) {
+        return 0;
+    }
+    
+    // Calculate intersection point
+    intersection_point[0] = line_start[0] + t * line_dir[0];
+    intersection_point[1] = line_start[1] + t * line_dir[1];
+    intersection_point[2] = line_start[2] + t * line_dir[2];
+    
+    return 1;
+}
+
+// Classification of triangle vertices relative to cutting plane
+typedef enum {
+    VERTEX_ON_PLANE = 0,
+    VERTEX_POSITIVE = 1,
+    VERTEX_NEGATIVE = -1
+} vertex_classification_t;
+
+// Classify a vertex relative to the cutting plane
+vertex_classification_t classify_vertex(const float* vertex, const float* plane_normal, const float* plane_point) {
+    float distance = point_plane_distance(vertex, plane_normal, plane_point);
+    
+    if (fabs(distance) < 1e-6f) {
+        return VERTEX_ON_PLANE;
+    } else if (distance > 0.0f) {
+        return VERTEX_POSITIVE;
+    } else {
+        return VERTEX_NEGATIVE;
+    }
+}
+
+// Structure to hold triangle cutting results
+typedef struct {
+    stl_triangle_t triangles[4];  // Maximum 4 triangles can result from cutting one triangle
+    int count;                    // Number of triangles generated
+} triangle_cut_result_t;
+
+// Helper function to create a triangle from 3 vertices and a normal
+void create_triangle(stl_triangle_t* triangle, const float* v1, const float* v2, const float* v3, const float* normal) {
+    // Copy vertices
+    memcpy(triangle->vertices[0], v1, 3 * sizeof(float));
+    memcpy(triangle->vertices[1], v2, 3 * sizeof(float));
+    memcpy(triangle->vertices[2], v3, 3 * sizeof(float));
+    
+    // Copy normal
+    memcpy(triangle->normal, normal, 3 * sizeof(float));
+}
+
+// Cut a single triangle by a plane - this is the core geometric operation
+int cut_triangle_by_plane(const stl_triangle_t* triangle, const float* plane_normal, const float* plane_point, 
+                         triangle_cut_result_t* positive_result, triangle_cut_result_t* negative_result) {
+    
+    positive_result->count = 0;
+    negative_result->count = 0;
+    
+    // Classify all three vertices
+    vertex_classification_t class0 = classify_vertex(triangle->vertices[0], plane_normal, plane_point);
+    vertex_classification_t class1 = classify_vertex(triangle->vertices[1], plane_normal, plane_point);
+    vertex_classification_t class2 = classify_vertex(triangle->vertices[2], plane_normal, plane_point);
+    
+    // Count vertices on each side
+    int pos_count = (class0 == VERTEX_POSITIVE) + (class1 == VERTEX_POSITIVE) + (class2 == VERTEX_POSITIVE);
+    int neg_count = (class0 == VERTEX_NEGATIVE) + (class1 == VERTEX_NEGATIVE) + (class2 == VERTEX_NEGATIVE);
+    int on_plane_count = (class0 == VERTEX_ON_PLANE) + (class1 == VERTEX_ON_PLANE) + (class2 == VERTEX_ON_PLANE);
+    
+    // Case 1: All vertices on same side of plane - no cutting needed
+    if (pos_count == 3) {
+        // All vertices on positive side
+        create_triangle(&positive_result->triangles[0], triangle->vertices[0], triangle->vertices[1], triangle->vertices[2], triangle->normal);
+        positive_result->count = 1;
+        return 1;
+    }
+    if (neg_count == 3) {
+        // All vertices on negative side
+        create_triangle(&negative_result->triangles[0], triangle->vertices[0], triangle->vertices[1], triangle->vertices[2], triangle->normal);
+        negative_result->count = 1;
+        return 1;
+    }
+    
+    // Case 2: Triangle lies entirely on the plane
+    if (on_plane_count == 3) {
+        // Triangle is coplanar - assign to positive side by default
+        create_triangle(&positive_result->triangles[0], triangle->vertices[0], triangle->vertices[1], triangle->vertices[2], triangle->normal);
+        positive_result->count = 1;
+        return 1;
+    }
+    
+    // Case 3: Triangle intersects the plane - need to cut it
+    float intersection_points[2][3];  // At most 2 intersection points for a triangle
+    int intersection_edges[2];        // Track which edges the intersections are on
+    int intersection_count = 0;
+    
+    // Check each edge for intersection with the plane
+    const float* vertices[3] = {triangle->vertices[0], triangle->vertices[1], triangle->vertices[2]};
+    vertex_classification_t classes[3] = {class0, class1, class2};
+    
+    for (int i = 0; i < 3; i++) {
+        int next = (i + 1) % 3;
+        
+        // Check if this edge crosses the plane
+        if ((classes[i] == VERTEX_POSITIVE && classes[next] == VERTEX_NEGATIVE) ||
+            (classes[i] == VERTEX_NEGATIVE && classes[next] == VERTEX_POSITIVE)) {
+            
+            if (intersection_count < 2) {
+                if (line_plane_intersection(vertices[i], vertices[next], plane_normal, plane_point, 
+                                          intersection_points[intersection_count])) {
+                    intersection_edges[intersection_count] = i;  // Record which edge this intersection is on
+                    intersection_count++;
                 }
             }
         }
     }
     
-    // Cleanup voxel grid
-    for (int x = 0; x < num_voxels_x; x++) {
-        for (int y = 0; y < num_voxels_y; y++) {
-            free(voxel_grid[x][y]);
+    // Must have exactly 2 intersection points for a proper triangle cut
+    if (intersection_count != 2) {
+        // Fallback: assign whole triangle to side with most vertices
+        if (pos_count > neg_count) {
+            create_triangle(&positive_result->triangles[0], triangle->vertices[0], triangle->vertices[1], triangle->vertices[2], triangle->normal);
+            positive_result->count = 1;
+        } else {
+            create_triangle(&negative_result->triangles[0], triangle->vertices[0], triangle->vertices[1], triangle->vertices[2], triangle->normal);
+            negative_result->count = 1;
         }
-        free(voxel_grid[x]);
-    }
-    free(voxel_grid);
-    
-    if (decomp->root) {
-        // Count nodes and compute properties
-        count_nodes_and_compute_properties(decomp->root, decomp);
-        
-        // Build adjacency lists
-        build_adjacency_lists(decomp);
-        
-        decomp->decomposition_quality = compute_decomposition_quality(decomp);
+        return 1;
     }
     
-    return decomp;
-}
-
-float compute_part_concavity(const convex_part_t* part, const stl_file_t* stl) {
-    if (!part || !stl || part->num_triangles == 0) return 0.0f;
+    // Now we have 2 intersection points - create new triangles
+    // Order intersection points correctly based on the edges they're on
+    float* int1 = intersection_points[0];
+    float* int2 = intersection_points[1];
+    int edge1 = intersection_edges[0];
+    // int edge2 = intersection_edges[1];  // Currently unused
     
-    // Compute actual volume from triangles
-    float actual_volume = 0.0f;
-    for (unsigned int i = 0; i < part->num_triangles; i++) {
-        unsigned int triangle_idx = part->triangle_indices[i];
-        const stl_triangle_t* triangle = &stl->triangles[triangle_idx];
-        
-        // Compute signed volume of triangle with respect to origin
-        float v1x = triangle->vertices[0][0];
-        float v1y = triangle->vertices[0][1];
-        float v1z = triangle->vertices[0][2];
-        
-        float v2x = triangle->vertices[1][0];
-        float v2y = triangle->vertices[1][1];
-        float v2z = triangle->vertices[1][2];
-        
-        float v3x = triangle->vertices[2][0];
-        float v3y = triangle->vertices[2][1];
-        float v3z = triangle->vertices[2][2];
-        
-        // Volume = (1/6) * dot(v1, cross(v2, v3))
-        float ux = v2x - v1x;
-        float uy = v2y - v1y;
-        float uz = v2z - v1z;
-        
-        float wx = v3x - v1x;
-        float wy = v3y - v1y;
-        float wz = v3z - v1z;
-        
-        float cross_x = uy * wz - uz * wy;
-        float cross_y = uz * wx - ux * wz;
-        float cross_z = ux * wy - uy * wx;
-        
-        float signed_volume = (v1x * cross_x + v1y * cross_y + v1z * cross_z) / 6.0f;
-        actual_volume += fabsf(signed_volume);
-    }
-    
-    // Compute convex hull volume
-    float hull_volume = compute_volume(&part->hull);
-    
-    if (hull_volume <= 0.0f) return 0.0f;
-    
-    // Concavity is the ratio of unused hull volume to total hull volume
-    float concavity = (hull_volume - actual_volume) / hull_volume;
-    
-    // Clamp to [0, 1] range
-    if (concavity < 0.0f) concavity = 0.0f;
-    if (concavity > 1.0f) concavity = 1.0f;
-    
-    return concavity;
-}
-
-// Additional utility functions
-int hulls_intersect(const convex_hull_t* hull1, const convex_hull_t* hull2) {
-    if (!hull1 || !hull2) return 0;
-    
-    // Check if bounding boxes overlap
-    if (hull1->bounds[3] < hull2->bounds[0] || hull1->bounds[0] > hull2->bounds[3] ||
-        hull1->bounds[4] < hull2->bounds[1] || hull1->bounds[1] > hull2->bounds[4] ||
-        hull1->bounds[5] < hull2->bounds[2] || hull1->bounds[2] > hull2->bounds[5]) {
-        return 0;
+    // Determine which vertex is isolated (different side from the other two)
+    if (pos_count == 1) {
+        // One vertex on positive side, two on negative side
+        // Find the isolated positive vertex
+        for (int i = 0; i < 3; i++) {
+            if (classes[i] == VERTEX_POSITIVE) {
+                // Create one triangle on positive side (isolated vertex + 2 intersection points)
+                create_triangle(&positive_result->triangles[0], vertices[i], int1, int2, triangle->normal);
+                positive_result->count = 1;
+                
+                // Create quadrilateral on negative side from the two remaining vertices + intersection points
+                int v1 = (i + 1) % 3;
+                int v2 = (i + 2) % 3;
+                
+                // Order intersection points correctly relative to v1 and v2
+                // If edge1 connects to v1, then int1 should be paired with v1
+                float* first_int, *second_int;
+                if (edge1 == i || edge1 == v1) {
+                    // int1 is on edge from isolated vertex or connects to v1
+                    first_int = int1;
+                    second_int = int2;
+                } else {
+                    // int2 is on edge that connects to v1
+                    first_int = int2;
+                    second_int = int1;
+                }
+                
+                // Create two triangles forming the quadrilateral (v1, v2, second_int, first_int)
+                create_triangle(&negative_result->triangles[0], vertices[v1], vertices[v2], second_int, triangle->normal);
+                create_triangle(&negative_result->triangles[1], vertices[v1], second_int, first_int, triangle->normal);
+                negative_result->count = 2;
+                break;
+            }
+        }
+    } else if (neg_count == 1) {
+        // One vertex on negative side, two on positive side
+        // Find the isolated negative vertex
+        for (int i = 0; i < 3; i++) {
+            if (classes[i] == VERTEX_NEGATIVE) {
+                // Create one triangle on negative side (isolated vertex + 2 intersection points)
+                create_triangle(&negative_result->triangles[0], vertices[i], int1, int2, triangle->normal);
+                negative_result->count = 1;
+                
+                // Create quadrilateral on positive side from the two remaining vertices + intersection points
+                int v1 = (i + 1) % 3;
+                int v2 = (i + 2) % 3;
+                
+                // Order intersection points correctly relative to v1 and v2
+                // If edge1 connects to v1, then int1 should be paired with v1
+                float* first_int, *second_int;
+                if (edge1 == i || edge1 == v1) {
+                    // int1 is on edge from isolated vertex or connects to v1
+                    first_int = int1;
+                    second_int = int2;
+                } else {
+                    // int2 is on edge that connects to v1
+                    first_int = int2;
+                    second_int = int1;
+                }
+                
+                // Create two triangles forming the quadrilateral (v1, v2, second_int, first_int)
+                create_triangle(&positive_result->triangles[0], vertices[v1], vertices[v2], second_int, triangle->normal);
+                create_triangle(&positive_result->triangles[1], vertices[v1], second_int, first_int, triangle->normal);
+                positive_result->count = 2;
+                break;
+            }
+        }
     }
     
     return 1;
 }
 
-float compute_hull_distance(const convex_hull_t* hull1, const convex_hull_t* hull2) {
-    if (!hull1 || !hull2) return FLT_MAX;
-    
-    // Simple distance calculation using bounding box centers
-    float center1[3] = {0.0f, 0.0f, 0.0f};
-    float center2[3] = {0.0f, 0.0f, 0.0f};
-    if (!compute_centroid(hull1, center1) || !compute_centroid(hull2, center2)) {
-        return FLT_MAX;
+// Geometric mesh cutting using plane-triangle intersection
+stl_file_t* cut_mesh_by_plane(const stl_file_t* mesh, const float* point1, const float* point2, const float* point3, 
+                             int side, plane_generation_method_t plane_method) {
+    if (!mesh || !point1 || !point2 || !point3) {
+        return NULL;
     }
     
-    return distance_3d(center1[0], center1[1], center1[2], center2[0], center2[1], center2[2]);
+    // Calculate plane normal based on the selected method
+    float vec1[3], vec2[3];
+    float* plane_point;
+    
+    if (plane_method == PLANE_METHOD_THREE_WORST_POINTS) {
+        // Use three worst points to define the plane
+        vec1[0] = point2[0] - point1[0];
+        vec1[1] = point2[1] - point1[1];
+        vec1[2] = point2[2] - point1[2];
+        
+        vec2[0] = point3[0] - point1[0];
+        vec2[1] = point3[1] - point1[1];
+        vec2[2] = point3[2] - point1[2];
+        
+        plane_point = (float*)point1;  // Use first worst point as plane reference
+    } else {
+        // Use two worst points + mesh center (point3 is the center)
+        vec1[0] = point2[0] - point1[0];
+        vec1[1] = point2[1] - point1[1];
+        vec1[2] = point2[2] - point1[2];
+        
+        vec2[0] = point3[0] - point1[0];  // vector from point1 to center
+        vec2[1] = point3[1] - point1[1];
+        vec2[2] = point3[2] - point1[2];
+        
+        plane_point = (float*)point3;  // Use mesh center as plane reference
+    }
+    
+    // Cross product to get plane normal
+    float plane_normal[3] = {
+        vec1[1] * vec2[2] - vec1[2] * vec2[1],
+        vec1[2] * vec2[0] - vec1[0] * vec2[2],
+        vec1[0] * vec2[1] - vec1[1] * vec2[0]
+    };
+    
+    // Normalize the plane normal
+    float normal_length = sqrtf(plane_normal[0] * plane_normal[0] + 
+                               plane_normal[1] * plane_normal[1] + 
+                               plane_normal[2] * plane_normal[2]);
+    if (normal_length < 1e-6f) {
+        return NULL; // Degenerate plane
+    }
+    
+    plane_normal[0] /= normal_length;
+    plane_normal[1] /= normal_length;
+    plane_normal[2] /= normal_length;
+    
+    // First pass: count how many triangles we'll need
+    unsigned int total_triangle_count = 0;
+    for (unsigned int i = 0; i < mesh->num_triangles; i++) {
+        triangle_cut_result_t pos_result, neg_result;
+        cut_triangle_by_plane(&mesh->triangles[i], plane_normal, plane_point, &pos_result, &neg_result);
+        
+        if (side == 0) {
+            total_triangle_count += neg_result.count;  // Negative side
+        } else {
+            total_triangle_count += pos_result.count;  // Positive side
+        }
+    }
+    
+    if (total_triangle_count == 0) {
+        return NULL; // No triangles on this side
+    }
+    
+    printf("    Geometric cutting: %u input triangles -> %u output triangles on side %d\n", 
+           mesh->num_triangles, total_triangle_count, side);
+    
+    // Create result mesh
+    stl_file_t* result = malloc(sizeof(stl_file_t));
+    if (!result) {
+        return NULL;
+    }
+    
+    // Copy header from original mesh
+    memcpy(result->header, mesh->header, 80);
+    result->num_triangles = total_triangle_count;
+    
+    // Allocate triangles array
+    result->triangles = malloc(total_triangle_count * sizeof(stl_triangle_t));
+    if (!result->triangles) {
+        free(result);
+        return NULL;
+    }
+    
+    // Second pass: actually cut triangles and store results
+    unsigned int result_idx = 0;
+    for (unsigned int i = 0; i < mesh->num_triangles; i++) {
+        triangle_cut_result_t pos_result, neg_result;
+        cut_triangle_by_plane(&mesh->triangles[i], plane_normal, plane_point, &pos_result, &neg_result);
+        
+        triangle_cut_result_t* target_result = (side == 0) ? &neg_result : &pos_result;
+        
+        // Copy all triangles from the target side
+        for (int j = 0; j < target_result->count; j++) {
+            memcpy(&result->triangles[result_idx], &target_result->triangles[j], sizeof(stl_triangle_t));
+            result_idx++;
+        }
+    }
+    
+    // Calculate bounds for the new mesh
+    calculate_stl_bounds(result);
+    
+    return result;
 }
 
-float compute_overlap_volume(const convex_hull_t* hull1, const convex_hull_t* hull2) {
-    if (!hull1 || !hull2) return 0.0f;
+// Create a new tree node
+mesh_tree_node_t* create_tree_node(stl_file_t* mesh, int depth) {
+    mesh_tree_node_t* node = malloc(sizeof(mesh_tree_node_t));
+    if (!node) return NULL;
     
-    // Check if bounding boxes overlap
-    if (hull1->bounds[3] < hull2->bounds[0] || hull1->bounds[0] > hull2->bounds[3] ||
-        hull1->bounds[4] < hull2->bounds[1] || hull1->bounds[1] > hull2->bounds[4] ||
-        hull1->bounds[5] < hull2->bounds[2] || hull1->bounds[2] > hull2->bounds[5]) {
-        return 0.0f;
+    node->mesh = mesh;
+    node->depth = depth;
+    node->is_leaf = 0;
+    node->concavity_score = 0.0f;
+    node->left_child = NULL;
+    node->right_child = NULL;
+    
+    // Initialize cutting plane data as invalid
+    node->cutting_plane.is_valid = 0;
+    
+    return node;
+}
+
+// Free a tree node and all its children recursively
+void free_tree_node(mesh_tree_node_t* node) {
+    if (!node) return;
+    
+    free_tree_node(node->left_child);
+    free_tree_node(node->right_child);
+    
+    if (node->mesh) {
+        free_stl(node->mesh);
+    }
+    free(node);
+}
+
+// Free the entire decomposition tree
+void free_decomposition_tree(decomposition_tree_t* tree) {
+    if (!tree) return;
+    
+    free_tree_node(tree->root);
+    free(tree);
+}
+
+// Recursive helper for building the decomposition tree
+mesh_tree_node_t* decompose_node_recursive(stl_file_t* mesh, float concavity_threshold, int current_depth, int max_depth, decomposition_tree_t* tree, plane_generation_method_t plane_method) {
+    if (!mesh) return NULL;
+    
+    // Create node for this mesh
+    mesh_tree_node_t* node = create_tree_node(mesh, current_depth);
+    if (!node) return NULL;
+    
+    // Check current mesh concavity
+    concavity_result_t concavity_result;
+    if (!check_concavity(mesh, &concavity_result)) {
+        node->is_leaf = 1;
+        node->concavity_score = 0.0f;
+        update_tree_stats(tree, node);
+        return node;
     }
     
-    // Compute intersection bounds
-    float intersection_bounds[6];
-    intersection_bounds[0] = fmaxf(hull1->bounds[0], hull2->bounds[0]);
-    intersection_bounds[1] = fmaxf(hull1->bounds[1], hull2->bounds[1]);
-    intersection_bounds[2] = fmaxf(hull1->bounds[2], hull2->bounds[2]);
-    intersection_bounds[3] = fminf(hull1->bounds[3], hull2->bounds[3]);
-    intersection_bounds[4] = fminf(hull1->bounds[4], hull2->bounds[4]);
-    intersection_bounds[5] = fminf(hull1->bounds[5], hull2->bounds[5]);
+    node->concavity_score = concavity_result.concavity_score;
     
-    // Compute intersection volume (simplified as bounding box volume)
-    float width = intersection_bounds[3] - intersection_bounds[0];
-    float height = intersection_bounds[4] - intersection_bounds[1];
-    float depth = intersection_bounds[5] - intersection_bounds[2];
+    // Base cases - make this a leaf node
+    if (current_depth >= max_depth) {
+        printf("Node at depth %d reached max depth limit\n", current_depth);
+        node->is_leaf = 1;
+        update_tree_stats(tree, node);
+        return node;
+    }
     
-        return width * height * depth;
-} 
+    if (concavity_result.concavity_score >= concavity_threshold) {
+        printf("Node at depth %d reached acceptable concavity: %.3f\n", current_depth, concavity_result.concavity_score);
+        node->is_leaf = 1;
+        update_tree_stats(tree, node);
+        return node;
+    }
+    
+    // Mesh needs decomposition
+    printf("Decomposing node at depth %d (concavity: %.3f)\n", current_depth, concavity_result.concavity_score);
+    
+    // FIRST: Check if mesh already contains multiple disconnected components
+    int num_components = 0;
+    connected_component_t* components = find_connected_components(mesh, &num_components);
+    
+    // Variables for separation plane approach
+    int use_separation_plane = 0;
+    float point1[3], point2[3], sep_point3[3];
+    float point3[3];  // Will be set by either separation plane or concavity method
+    
+    if (num_components > 1) {
+        printf("Found %d disconnected components, attempting separation plane approach\n", num_components);
+        printf("Component sizes: ");
+        for (int i = 0; i < num_components; i++) {
+            printf("%d ", components[i].count);
+        }
+        printf("\n");
+        
+        // Try to find a separation plane between components instead of direct separation
+        if (num_components == 2) {
+            // Find the separation plane between the two components
+            separation_plane_t sep_plane = find_separation_plane(mesh, &components[0], &components[1]);
+            
+            if (sep_plane.is_valid) {
+                printf("Using separation plane approach for disconnected components\n");
+                
+                // Clean up components since we're using geometric cutting
+                for (int i = 0; i < num_components; i++) {
+                    free(components[i].triangle_indices);
+                }
+                free(components);
+                components = NULL;  // Prevent double-free later
+                
+                // Use the separation plane for geometric cutting
+                // Convert separation plane to the format expected by cut_mesh_by_plane
+                // We'll create three points defining the plane
+                
+                // Use the plane point as point1
+                memcpy(point1, sep_plane.point, 3 * sizeof(float));
+                
+                // Create two additional points on the plane to define it
+                // Find a perpendicular vector to the normal
+                float perpendicular[3];
+                if (fabsf(sep_plane.normal[0]) < 0.9f) {
+                    // Normal is not primarily in X direction, use X axis
+                    perpendicular[0] = 1.0f;
+                    perpendicular[1] = 0.0f;
+                    perpendicular[2] = 0.0f;
+                } else {
+                    // Normal is primarily in X direction, use Y axis
+                    perpendicular[0] = 0.0f;
+                    perpendicular[1] = 1.0f;
+                    perpendicular[2] = 0.0f;
+                }
+                
+                // Make perpendicular truly perpendicular using cross product
+                float temp[3] = {
+                    sep_plane.normal[1] * perpendicular[2] - sep_plane.normal[2] * perpendicular[1],
+                    sep_plane.normal[2] * perpendicular[0] - sep_plane.normal[0] * perpendicular[2],
+                    sep_plane.normal[0] * perpendicular[1] - sep_plane.normal[1] * perpendicular[0]
+                };
+                
+                // Normalize the perpendicular vector
+                float perp_length = sqrtf(temp[0] * temp[0] + temp[1] * temp[1] + temp[2] * temp[2]);
+                if (perp_length > 1e-6f) {
+                    temp[0] /= perp_length;
+                    temp[1] /= perp_length;
+                    temp[2] /= perp_length;
+                }
+                
+                // Create point2 and point3 on the plane
+                point2[0] = point1[0] + temp[0];
+                point2[1] = point1[1] + temp[1];
+                point2[2] = point1[2] + temp[2];
+                
+                // Create third point using cross product of normal and first perpendicular
+                float second_perp[3] = {
+                    sep_plane.normal[1] * temp[2] - sep_plane.normal[2] * temp[1],
+                    sep_plane.normal[2] * temp[0] - sep_plane.normal[0] * temp[2],
+                    sep_plane.normal[0] * temp[1] - sep_plane.normal[1] * temp[0]
+                };
+                
+                sep_point3[0] = point1[0] + second_perp[0];
+                sep_point3[1] = point1[1] + second_perp[1];
+                sep_point3[2] = point1[2] + second_perp[2];
+                
+                printf("  Separation cutting plane points:\n");
+                printf("    Point 1: (%.3f, %.3f, %.3f)\n", point1[0], point1[1], point1[2]);
+                printf("    Point 2: (%.3f, %.3f, %.3f)\n", point2[0], point2[1], point2[2]);
+                printf("    Point 3: (%.3f, %.3f, %.3f)\n", sep_point3[0], sep_point3[1], sep_point3[2]);
+                
+                // Set flag to use separation plane and continue to geometric cutting
+                use_separation_plane = 1;
+                // Copy sep_point3 to point3 for later use in cutting plane storage
+                memcpy(point3, sep_point3, 3 * sizeof(float));
+                
+                // Skip the fallback component separation logic
+                goto skip_component_fallback;
+            } else {
+                printf("Failed to find valid separation plane, falling back to direct component separation\n");
+                // Fall back to direct component separation (original logic)
+                // This is the fallback case where separation plane couldn't be determined
+            }
+            
+            // Fallback: Direct component separation (original approach)
+            stl_file_t* submesh1 = create_submesh_from_component(mesh, &components[0]);
+            stl_file_t* submesh2 = create_submesh_from_component(mesh, &components[1]);
+            
+            if (submesh1 && submesh2) {
+                // Check concavity of each component before decomposing further
+                concavity_result_t component1_concavity, component2_concavity;
+                int comp1_valid = check_concavity(submesh1, &component1_concavity);
+                int comp2_valid = check_concavity(submesh2, &component2_concavity);
+                
+                printf("Fallback: Component 1 concavity: %.3f, Component 2 concavity: %.3f\n", 
+                       comp1_valid ? component1_concavity.concavity_score : -1.0f,
+                       comp2_valid ? component2_concavity.concavity_score : -1.0f);
+                
+                // Create appropriate child nodes based on component concavity
+                // Note: decompose_node_recursive takes ownership of the mesh pointers
+                if (comp1_valid && component1_concavity.concavity_score >= concavity_threshold) {
+                    // Component 1 is acceptably convex - create leaf node directly
+                    printf("Fallback: Component 1 is acceptably convex (%.3f), creating leaf node\n", component1_concavity.concavity_score);
+                    node->left_child = create_tree_node(submesh1, current_depth + 1);
+                    node->left_child->is_leaf = 1;
+                    node->left_child->concavity_score = component1_concavity.concavity_score;
+                    update_tree_stats(tree, node->left_child);
+                } else {
+                    // Component 1 needs further decomposition
+                    printf("Fallback: Component 1 needs decomposition (%.3f)\n", comp1_valid ? component1_concavity.concavity_score : -1.0f);
+                    node->left_child = decompose_node_recursive(submesh1, concavity_threshold, current_depth + 1, max_depth, tree, plane_method);
+                }
+                
+                if (comp2_valid && component2_concavity.concavity_score >= concavity_threshold) {
+                    // Component 2 is acceptably convex - create leaf node directly
+                    printf("Fallback: Component 2 is acceptably convex (%.3f), creating leaf node\n", component2_concavity.concavity_score);
+                    node->right_child = create_tree_node(submesh2, current_depth + 1);
+                    node->right_child->is_leaf = 1;
+                    node->right_child->concavity_score = component2_concavity.concavity_score;
+                    update_tree_stats(tree, node->right_child);
+                } else {
+                    // Component 2 needs further decomposition
+                    printf("Fallback: Component 2 needs decomposition (%.3f)\n", comp2_valid ? component2_concavity.concavity_score : -1.0f);
+                    node->right_child = decompose_node_recursive(submesh2, concavity_threshold, current_depth + 1, max_depth, tree, plane_method);
+                }
+                
+                // Cleanup components (but NOT the submeshes - they're now owned by the tree nodes)
+                for (int i = 0; i < num_components; i++) {
+                    free(components[i].triangle_indices);
+                }
+                free(components);
+                
+                // Don't free the submeshes here - they're now owned by the child nodes
+                
+                return node;
+            }
+            
+            // Cleanup on failure
+            if (submesh1) free_stl(submesh1);
+            if (submesh2) free_stl(submesh2);
+        } else {
+            // Multiple components (>2) - for now, just take the two largest
+            printf("Warning: %d components found, using two largest for binary decomposition\n", num_components);
+            
+            // Find two largest components
+            int largest_idx = 0, second_largest_idx = 1;
+            if (components[1].count > components[0].count) {
+                largest_idx = 1;
+                second_largest_idx = 0;
+            }
+            
+            for (int i = 2; i < num_components; i++) {
+                if (components[i].count > components[largest_idx].count) {
+                    second_largest_idx = largest_idx;
+                    largest_idx = i;
+                } else if (components[i].count > components[second_largest_idx].count) {
+                    second_largest_idx = i;
+                }
+            }
+            
+            stl_file_t* submesh1 = create_submesh_from_component(mesh, &components[largest_idx]);
+            stl_file_t* submesh2 = create_submesh_from_component(mesh, &components[second_largest_idx]);
+            
+            if (submesh1 && submesh2) {
+                // Check concavity of each component before decomposing further
+                concavity_result_t component1_concavity, component2_concavity;
+                int comp1_valid = check_concavity(submesh1, &component1_concavity);
+                int comp2_valid = check_concavity(submesh2, &component2_concavity);
+                
+                printf("Largest component concavity: %.3f, Second largest concavity: %.3f\n", 
+                       comp1_valid ? component1_concavity.concavity_score : -1.0f,
+                       comp2_valid ? component2_concavity.concavity_score : -1.0f);
+                
+                // Create appropriate child nodes based on component concavity
+                if (comp1_valid && component1_concavity.concavity_score >= concavity_threshold) {
+                    // Component 1 is acceptably convex - create leaf node directly
+                    printf("Largest component is acceptably convex (%.3f), creating leaf node\n", component1_concavity.concavity_score);
+                    node->left_child = create_tree_node(submesh1, current_depth + 1);
+                    node->left_child->is_leaf = 1;
+                    node->left_child->concavity_score = component1_concavity.concavity_score;
+                    update_tree_stats(tree, node->left_child);
+                } else {
+                    // Component 1 needs further decomposition
+                    printf("Largest component needs decomposition (%.3f)\n", comp1_valid ? component1_concavity.concavity_score : -1.0f);
+                    node->left_child = decompose_node_recursive(submesh1, concavity_threshold, current_depth + 1, max_depth, tree, plane_method);
+                }
+                
+                if (comp2_valid && component2_concavity.concavity_score >= concavity_threshold) {
+                    // Component 2 is acceptably convex - create leaf node directly
+                    printf("Second largest component is acceptably convex (%.3f), creating leaf node\n", component2_concavity.concavity_score);
+                    node->right_child = create_tree_node(submesh2, current_depth + 1);
+                    node->right_child->is_leaf = 1;
+                    node->right_child->concavity_score = component2_concavity.concavity_score;
+                    update_tree_stats(tree, node->right_child);
+                } else {
+                    // Component 2 needs further decomposition
+                    printf("Second largest component needs decomposition (%.3f)\n", comp2_valid ? component2_concavity.concavity_score : -1.0f);
+                    node->right_child = decompose_node_recursive(submesh2, concavity_threshold, current_depth + 1, max_depth, tree, plane_method);
+                }
+                
+                // Cleanup components (but NOT the submeshes - they're now owned by the tree nodes)
+                for (int i = 0; i < num_components; i++) {
+                    free(components[i].triangle_indices);
+                }
+                free(components);
+                
+                // Don't free the submeshes here - they're now owned by the child nodes
+                
+                return node;
+            }
+            
+            // Cleanup on failure
+            if (submesh1) free_stl(submesh1);
+            if (submesh2) free_stl(submesh2);
+        }
+        
+        // If component separation failed, fall through to geometric cutting
+        printf("Component separation failed, falling back to geometric cutting\n");
+    }
+    
+    skip_component_fallback:
+    
+    // Cleanup components if we're not using them
+    if (components) {
+        for (int i = 0; i < num_components; i++) {
+            free(components[i].triangle_indices);
+        }
+        free(components);
+    }
+    
+    // SECOND: Attempt geometric cutting (original logic or separation plane)
+    // Prepare cutting plane points based on the method
+    // Check if we have separation plane points defined (from goto path)
+    stl_file_t* mesh_left = NULL;
+    stl_file_t* mesh_right = NULL;
+    
+    // If we have separation plane defined, use those points
+    // Otherwise, use the concavity-based approach
+    if (use_separation_plane) {
+        // This path is used when we have a separation plane between disconnected components
+        printf("  Using separation plane for geometric cutting\n");
+        
+        // Use a custom cutting method for separation planes
+        mesh_left = cut_mesh_by_plane(mesh, point1, point2, sep_point3, 0, PLANE_METHOD_THREE_WORST_POINTS);
+        mesh_right = cut_mesh_by_plane(mesh, point1, point2, sep_point3, 1, PLANE_METHOD_THREE_WORST_POINTS);
+    } else {
+        // Normal concavity-based cutting approach
+        if (plane_method == PLANE_METHOD_TWO_WORST_PLUS_CENTER) {
+            // Calculate mesh center for third point
+            point3[0] = (mesh->bounds[0] + mesh->bounds[3]) / 2.0f;
+            point3[1] = (mesh->bounds[1] + mesh->bounds[4]) / 2.0f;
+            point3[2] = (mesh->bounds[2] + mesh->bounds[5]) / 2.0f;
+        } else {
+            // Use third worst point
+            point3[0] = concavity_result.worst_point_3[0];
+            point3[1] = concavity_result.worst_point_3[1];
+            point3[2] = concavity_result.worst_point_3[2];
+        }
+        
+        // Debug: Print the 3 points defining the cutting plane
+        printf("  Cutting plane at depth %d (%s method):\n", current_depth, 
+               plane_method == PLANE_METHOD_THREE_WORST_POINTS ? "3 worst points" : "2 worst + center");
+        printf("    Point 1 (worst): (%.3f, %.3f, %.3f)\n", 
+               concavity_result.worst_point_1[0], concavity_result.worst_point_1[1], concavity_result.worst_point_1[2]);
+        printf("    Point 2 (worst): (%.3f, %.3f, %.3f)\n", 
+               concavity_result.worst_point_2[0], concavity_result.worst_point_2[1], concavity_result.worst_point_2[2]);
+        printf("    Point 3 (%s): (%.3f, %.3f, %.3f)\n", 
+               plane_method == PLANE_METHOD_THREE_WORST_POINTS ? "worst" : "center",
+               point3[0], point3[1], point3[2]);
+        
+        // Cut mesh using the selected plane method
+        mesh_left = cut_mesh_by_plane(mesh, concavity_result.worst_point_1, 
+                                     concavity_result.worst_point_2, point3, 0, plane_method);
+        mesh_right = cut_mesh_by_plane(mesh, concavity_result.worst_point_1, 
+                                      concavity_result.worst_point_2, point3, 1, plane_method);
+    }
+    
+    if (!mesh_left || !mesh_right) {
+        // Cutting failed, make this a leaf node
+        printf("Mesh cutting failed at depth %d, making leaf node\n", current_depth);
+        if (mesh_left) free_stl(mesh_left);
+        if (mesh_right) free_stl(mesh_right);
+        
+        node->is_leaf = 1;
+        update_tree_stats(tree, node);
+        return node;
+    }
+    
+    // Validate that the cut actually separated the mesh meaningfully
+    // If one side has nearly all triangles and the other has very few, 
+    // the cut may have passed between disconnected components
+    unsigned int total_triangles = mesh_left->num_triangles + mesh_right->num_triangles;
+    float left_ratio = (float)mesh_left->num_triangles / (float)total_triangles;
+    float right_ratio = (float)mesh_right->num_triangles / (float)total_triangles;
+    
+    const float MIN_CUT_RATIO = 0.1f; // Each side should have at least 10% of triangles
+    
+    if (left_ratio < MIN_CUT_RATIO || right_ratio < MIN_CUT_RATIO) {
+        printf("Warning: Unbalanced cut at depth %d (%.1f%% vs %.1f%%), may indicate disconnected components\n", 
+               current_depth, left_ratio * 100.0f, right_ratio * 100.0f);
+        
+        // Check if the smaller side forms disconnected components
+        stl_file_t* smaller_mesh = (mesh_left->num_triangles < mesh_right->num_triangles) ? mesh_left : mesh_right;
+        int small_components = 0;
+        connected_component_t* small_comps = find_connected_components(smaller_mesh, &small_components);
+        
+        if (small_components > 1) {
+            printf("Confirmed: Cut passed between disconnected components (%d found in smaller side)\n", small_components);
+            
+            // Clean up the failed cut result
+            if (small_comps) {
+                for (int i = 0; i < small_components; i++) {
+                    free(small_comps[i].triangle_indices);
+                }
+                free(small_comps);
+            }
+            
+            // Fall back to component-based separation on the original mesh
+            int orig_components = 0;
+            connected_component_t* orig_comps = find_connected_components(mesh, &orig_components);
+            
+            if (orig_comps && orig_components >= 2) {
+                printf("Retrying with component-based separation\n");
+                
+                // Clean up failed geometric cut
+                free_stl(mesh_left);
+                free_stl(mesh_right);
+                
+                // Use component separation logic
+                if (orig_components == 2) {
+                    stl_file_t* submesh1 = create_submesh_from_component(mesh, &orig_comps[0]);
+                    stl_file_t* submesh2 = create_submesh_from_component(mesh, &orig_comps[1]);
+                    
+                    if (submesh1 && submesh2) {
+                        // Check concavity of each component before decomposing further
+                        concavity_result_t component1_concavity, component2_concavity;
+                        int comp1_valid = check_concavity(submesh1, &component1_concavity);
+                        int comp2_valid = check_concavity(submesh2, &component2_concavity);
+                        
+                        printf("Retry: Component 1 concavity: %.3f, Component 2 concavity: %.3f\n", 
+                               comp1_valid ? component1_concavity.concavity_score : -1.0f,
+                               comp2_valid ? component2_concavity.concavity_score : -1.0f);
+                        
+                        // Create appropriate child nodes based on component concavity
+                        if (comp1_valid && component1_concavity.concavity_score >= concavity_threshold) {
+                            // Component 1 is acceptably convex - create leaf node directly
+                            printf("Retry: Component 1 is acceptably convex (%.3f), creating leaf node\n", component1_concavity.concavity_score);
+                            node->left_child = create_tree_node(submesh1, current_depth + 1);
+                            node->left_child->is_leaf = 1;
+                            node->left_child->concavity_score = component1_concavity.concavity_score;
+                            update_tree_stats(tree, node->left_child);
+                        } else {
+                            // Component 1 needs further decomposition
+                            printf("Retry: Component 1 needs decomposition (%.3f)\n", comp1_valid ? component1_concavity.concavity_score : -1.0f);
+                            node->left_child = decompose_node_recursive(submesh1, concavity_threshold, current_depth + 1, max_depth, tree, plane_method);
+                        }
+                        
+                        if (comp2_valid && component2_concavity.concavity_score >= concavity_threshold) {
+                            // Component 2 is acceptably convex - create leaf node directly
+                            printf("Retry: Component 2 is acceptably convex (%.3f), creating leaf node\n", component2_concavity.concavity_score);
+                            node->right_child = create_tree_node(submesh2, current_depth + 1);
+                            node->right_child->is_leaf = 1;
+                            node->right_child->concavity_score = component2_concavity.concavity_score;
+                            update_tree_stats(tree, node->right_child);
+                        } else {
+                            // Component 2 needs further decomposition
+                            printf("Retry: Component 2 needs decomposition (%.3f)\n", comp2_valid ? component2_concavity.concavity_score : -1.0f);
+                            node->right_child = decompose_node_recursive(submesh2, concavity_threshold, current_depth + 1, max_depth, tree, plane_method);
+                        }
+                        
+                        // Cleanup components (but NOT the submeshes - they're now owned by the tree nodes)
+                        for (int i = 0; i < orig_components; i++) {
+                            free(orig_comps[i].triangle_indices);
+                        }
+                        free(orig_comps);
+                        
+                        // Don't free the submeshes here - they're now owned by the child nodes
+                        
+                        return node;
+                    }
+                    
+                    if (submesh1) free_stl(submesh1);
+                    if (submesh2) free_stl(submesh2);
+                }
+                
+                // Cleanup components
+                for (int i = 0; i < orig_components; i++) {
+                    free(orig_comps[i].triangle_indices);
+                }
+                free(orig_comps);
+            }
+            
+            // If component separation also failed, make this a leaf
+            printf("Component separation retry failed, making leaf node\n");
+            node->is_leaf = 1;
+            update_tree_stats(tree, node);
+            return node;
+        }
+        
+        // Clean up component analysis
+        if (small_comps) {
+            for (int i = 0; i < small_components; i++) {
+                free(small_comps[i].triangle_indices);
+            }
+            free(small_comps);
+        }
+    }
+    
+    // Successfully cut mesh - update tree stats for this internal node
+    update_tree_stats(tree, node);
+    
+    // Store cutting plane information for visualization
+    node->cutting_plane.is_valid = 1;
+    if (use_separation_plane) {
+        // Use separation plane points
+        memcpy(node->cutting_plane.point1, point1, 3 * sizeof(float));
+        memcpy(node->cutting_plane.point2, point2, 3 * sizeof(float));
+        memcpy(node->cutting_plane.point3, point3, 3 * sizeof(float));
+    } else {
+        // Use concavity-based points
+        memcpy(node->cutting_plane.point1, concavity_result.worst_point_1, 3 * sizeof(float));
+        memcpy(node->cutting_plane.point2, concavity_result.worst_point_2, 3 * sizeof(float));
+        memcpy(node->cutting_plane.point3, point3, 3 * sizeof(float));
+    }
+    
+    // Calculate and store plane normal and center
+    float vec1[3] = {
+        node->cutting_plane.point2[0] - node->cutting_plane.point1[0],
+        node->cutting_plane.point2[1] - node->cutting_plane.point1[1],
+        node->cutting_plane.point2[2] - node->cutting_plane.point1[2]
+    };
+    float vec2[3] = {
+        node->cutting_plane.point3[0] - node->cutting_plane.point1[0],
+        node->cutting_plane.point3[1] - node->cutting_plane.point1[1],
+        node->cutting_plane.point3[2] - node->cutting_plane.point1[2]
+    };
+    
+    // Cross product for normal
+    node->cutting_plane.normal[0] = vec1[1] * vec2[2] - vec1[2] * vec2[1];
+    node->cutting_plane.normal[1] = vec1[2] * vec2[0] - vec1[0] * vec2[2];
+    node->cutting_plane.normal[2] = vec1[0] * vec2[1] - vec1[1] * vec2[0];
+    
+    // Normalize the normal
+    float normal_length = sqrtf(
+        node->cutting_plane.normal[0] * node->cutting_plane.normal[0] +
+        node->cutting_plane.normal[1] * node->cutting_plane.normal[1] +
+        node->cutting_plane.normal[2] * node->cutting_plane.normal[2]
+    );
+    if (normal_length > 1e-6f) {
+        node->cutting_plane.normal[0] /= normal_length;
+        node->cutting_plane.normal[1] /= normal_length;
+        node->cutting_plane.normal[2] /= normal_length;
+    }
+    
+    // Calculate plane center as average of the three points
+    node->cutting_plane.center[0] = (node->cutting_plane.point1[0] + node->cutting_plane.point2[0] + node->cutting_plane.point3[0]) / 3.0f;
+    node->cutting_plane.center[1] = (node->cutting_plane.point1[1] + node->cutting_plane.point2[1] + node->cutting_plane.point3[1]) / 3.0f;
+    node->cutting_plane.center[2] = (node->cutting_plane.point1[2] + node->cutting_plane.point2[2] + node->cutting_plane.point3[2]) / 3.0f;
+    
+    // Recursively decompose the two pieces
+    node->left_child = decompose_node_recursive(mesh_left, concavity_threshold, current_depth + 1, max_depth, tree, plane_method);
+    node->right_child = decompose_node_recursive(mesh_right, concavity_threshold, current_depth + 1, max_depth, tree, plane_method);
+    
+    return node;
+}
+
+// Main decomposition function that returns a tree
+decomposition_tree_t* decompose_mesh_tree(const stl_file_t* mesh, float concavity_threshold, int max_depth, plane_generation_method_t plane_method) {
+    if (!mesh) return NULL;
+    
+    // Create tree structure
+    decomposition_tree_t* tree = malloc(sizeof(decomposition_tree_t));
+    if (!tree) return NULL;
+    
+    // Initialize tree statistics
+    tree->total_nodes = 0;
+    tree->leaf_nodes = 0;
+    tree->max_depth_reached = 0;
+    
+    // Make a deep copy of the input mesh for the root node
+    stl_file_t* root_mesh = malloc(sizeof(stl_file_t));
+    if (!root_mesh) {
+        free(tree);
+        return NULL;
+    }
+    
+    // Copy mesh header and metadata
+    memcpy(root_mesh->header, mesh->header, 80);
+    root_mesh->num_triangles = mesh->num_triangles;
+    memcpy(root_mesh->bounds, mesh->bounds, 6 * sizeof(float));
+    
+    // Deep copy triangles array
+    root_mesh->triangles = malloc(mesh->num_triangles * sizeof(stl_triangle_t));
+    if (!root_mesh->triangles) {
+        free(root_mesh);
+        free(tree);
+        return NULL;
+    }
+    memcpy(root_mesh->triangles, mesh->triangles, mesh->num_triangles * sizeof(stl_triangle_t));
+    
+    // Build the decomposition tree recursively
+    tree->root = decompose_node_recursive(root_mesh, concavity_threshold, 0, max_depth, tree, plane_method);
+    
+    if (!tree->root) {
+        free(tree);
+        return NULL;
+    }
+    
+    printf("Decomposition complete: %d total nodes, %d leaf nodes, max depth: %d\n", 
+           tree->total_nodes, tree->leaf_nodes, tree->max_depth_reached);
+    
+    return tree;
+}
+
+// Helper function for printing tree nodes recursively
+void print_tree_node(const mesh_tree_node_t* node, int indent) {
+    if (!node) return;
+    
+    // Print indentation
+    for (int i = 0; i < indent; i++) {
+        printf("  ");
+    }
+    
+    printf("Node depth=%d, concavity=%.3f, triangles=%u, %s\n", 
+           node->depth, 
+           node->concavity_score, 
+           node->mesh ? node->mesh->num_triangles : 0,
+           node->is_leaf ? "LEAF" : "INTERNAL");
+    
+    // Recursively print children
+    if (node->left_child) {
+        print_tree_node(node->left_child, indent + 1);
+    }
+    if (node->right_child) {
+        print_tree_node(node->right_child, indent + 1);
+    }
+}
+
+// Print tree structure for debugging
+void print_decomposition_tree(const decomposition_tree_t* tree) {
+    if (!tree) {
+        printf("Tree is NULL\n");
+        return;
+    }
+    
+    printf("Decomposition Tree Structure:\n");
+    printf("============================\n");
+    printf("Total nodes: %d\n", tree->total_nodes);
+    printf("Leaf nodes: %d\n", tree->leaf_nodes);
+    printf("Max depth reached: %d\n", tree->max_depth_reached);
+    printf("\nTree structure:\n");
+    
+    print_tree_node(tree->root, 0);
+    printf("\n");
+}
+
+// Helper function for collecting leaf nodes recursively
+void collect_leaf_nodes(const mesh_tree_node_t* node, mesh_tree_node_t** leaf_array, int* count, int max_leaves) {
+    if (!node || *count >= max_leaves) return;
+    
+    if (node->is_leaf) {
+        // Debug: Validate mesh data before adding to array
+        if (!node->mesh) {
+            printf("WARNING: Leaf node has NULL mesh at count %d\n", *count);
+            return;
+        }
+        if (node->mesh->num_triangles > 1000000) { // Sanity check
+            printf("WARNING: Leaf node has suspicious triangle count %u at count %d\n", 
+                   node->mesh->num_triangles, *count);
+            return;
+        }
+        
+        leaf_array[*count] = (mesh_tree_node_t*)node;  // Cast away const
+        (*count)++;
+        return;
+    }
+    
+    // Recursively collect from children
+    if (node->left_child) {
+        collect_leaf_nodes(node->left_child, leaf_array, count, max_leaves);
+    }
+    if (node->right_child) {
+        collect_leaf_nodes(node->right_child, leaf_array, count, max_leaves);
+    }
+}
+
+// Get all leaf nodes (final decomposed meshes) from the tree
+int get_leaf_nodes(const decomposition_tree_t* tree, mesh_tree_node_t** leaf_array, int max_leaves) {
+    if (!tree || !tree->root || !leaf_array) return 0;
+    
+    int count = 0;
+    collect_leaf_nodes(tree->root, leaf_array, &count, max_leaves);
+    return count;
+    }
