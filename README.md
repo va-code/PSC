@@ -148,6 +148,24 @@ This will use default parameters and output to `output.gcode`.
 ./parametric_slicer model.stl --gpu gpu --bvh 8 --convex hierarchical
 ```
 
+## Output Examples
+
+Here are some visual examples of the program's output:
+
+### Convex Decomposition Visualization
+![Convex Decomposition Example](OutputExamples/Screenshot%20from%202025-08-24%2010-35-28.png)
+*Example of convex decomposition showing how complex STL models are broken down into simpler convex parts for easier slicing and analysis.*
+
+### Model Inspector Interface
+![Model Inspector](OutputExamples/Screenshot%20from%202025-08-24%2010-39-40.png)
+*The interactive model inspector showing mesh analysis, topology evaluation, and visualization capabilities.*
+
+These examples demonstrate the program's ability to:
+- **Visualize complex 3D models** with interactive controls
+- **Perform convex decomposition** to break down complex geometries
+- **Analyze mesh topology** with comprehensive metrics
+- **Provide real-time feedback** during processing operations
+
 ## Technical Details
 
 ### STL Parsing
