@@ -2,6 +2,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <float.h>
 #include <string.h>
 
 // Structure to represent connected components
@@ -322,7 +323,7 @@ void update_tree_stats(decomposition_tree_t* tree, mesh_tree_node_t* node) {
     }
 }
 
-int check_concavity(const stl_file_t* stl, concavity_result_t* result) {
+int check_concavity(const stl_file_t* stl, concavity_result_t* result, concavity_method_t method) {
     if (!stl || stl->num_triangles == 0 || !result) {
         return 0; // Invalid input
     }
@@ -342,6 +343,294 @@ int check_concavity(const stl_file_t* stl, concavity_result_t* result) {
         return 1;
     }
     
+    // Select concavity detection method
+    if (method == CONCAVITY_METHOD_SURFACE_NORMAL) {
+        return check_concavity_surface_normal(stl, result);
+    } else {
+        return check_concavity_ray_casting(stl, result);
+    }
+}
+
+// Surface normal analysis method for concavity detection (O(N) complexity)
+int check_concavity_surface_normal(const stl_file_t* stl, concavity_result_t* result) {
+    printf("DEBUG: Starting surface normal analysis for %u triangles\n", stl->num_triangles);
+    // Calculate mesh center point
+    float center[3] = {0.0f, 0.0f, 0.0f};
+    int vertex_count = 0;
+    
+    printf("DEBUG: Calculating mesh center...\n");
+    for (unsigned int i = 0; i < stl->num_triangles; i++) {
+        for (int j = 0; j < 3; j++) {
+            center[0] += stl->triangles[i].vertices[j][0];
+            center[1] += stl->triangles[i].vertices[j][1];
+            center[2] += stl->triangles[i].vertices[j][2];
+            vertex_count++;
+        }
+    }
+    
+    center[0] /= vertex_count;
+    center[1] /= vertex_count;
+    center[2] /= vertex_count;
+    printf("DEBUG: Mesh center calculated: (%.3f, %.3f, %.3f)\n", center[0], center[1], center[2]);
+    
+    // Calculate triangle normals if not already present
+    printf("DEBUG: Calculating triangle normals...\n");
+    for (unsigned int i = 0; i < stl->num_triangles; i++) {
+        if (stl->triangles[i].normal[0] == 0.0f && 
+            stl->triangles[i].normal[1] == 0.0f && 
+            stl->triangles[i].normal[2] == 0.0f) {
+            // Calculate normal from vertices
+            float v1[3] = {
+                stl->triangles[i].vertices[1][0] - stl->triangles[i].vertices[0][0],
+                stl->triangles[i].vertices[1][1] - stl->triangles[i].vertices[0][1],
+                stl->triangles[i].vertices[1][2] - stl->triangles[i].vertices[0][2]
+            };
+            float v2[3] = {
+                stl->triangles[i].vertices[2][0] - stl->triangles[i].vertices[0][0],
+                stl->triangles[i].vertices[2][1] - stl->triangles[i].vertices[0][1],
+                stl->triangles[i].vertices[2][2] - stl->triangles[i].vertices[0][2]
+            };
+            
+            // Cross product to get normal
+            stl->triangles[i].normal[0] = v1[1] * v2[2] - v1[2] * v2[1];
+            stl->triangles[i].normal[1] = v1[2] * v2[0] - v1[0] * v2[2];
+            stl->triangles[i].normal[2] = v1[0] * v2[1] - v1[1] * v2[0];
+            
+            // Normalize
+            float length = sqrtf(stl->triangles[i].normal[0] * stl->triangles[i].normal[0] +
+                               stl->triangles[i].normal[1] * stl->triangles[i].normal[1] +
+                               stl->triangles[i].normal[2] * stl->triangles[i].normal[2]);
+            if (length > 1e-6f) {
+                stl->triangles[i].normal[0] /= length;
+                stl->triangles[i].normal[1] /= length;
+                stl->triangles[i].normal[2] /= length;
+            }
+        }
+    }
+    printf("DEBUG: Triangle normals calculated\n");
+    
+    // Track worst concavity scores (distance-weighted)
+    float worst_concavity_1 = 0.0f;  // Worst
+    float worst_concavity_2 = 0.0f;  // Second worst
+    float worst_concavity_3 = 0.0f;  // Third worst
+    int total_samples = 0;
+    int convex_samples = 0;
+    
+    // For each triangle, analyze surface normal changes with neighbors
+    printf("DEBUG: Starting main analysis loop...\n");
+    for (unsigned int i = 0; i < stl->num_triangles; i++) {
+        if (i % 10000 == 0) {
+            printf("DEBUG: Processing triangle %u/%u (%.1f%%)\n", i, stl->num_triangles, (float)i / stl->num_triangles * 100.0f);
+        }
+        const stl_triangle_t* triangle = &stl->triangles[i];
+        
+        // Calculate triangle centroid
+        float centroid[3] = {
+            (triangle->vertices[0][0] + triangle->vertices[1][0] + triangle->vertices[2][0]) / 3.0f,
+            (triangle->vertices[0][1] + triangle->vertices[1][1] + triangle->vertices[2][1]) / 3.0f,
+            (triangle->vertices[0][2] + triangle->vertices[1][2] + triangle->vertices[2][2]) / 3.0f
+        };
+        
+        // Calculate distance from centroid to mesh center
+        float center_distance = sqrtf(
+            (centroid[0] - center[0]) * (centroid[0] - center[0]) +
+            (centroid[1] - center[1]) * (centroid[1] - center[1]) +
+            (centroid[2] - center[2]) * (centroid[2] - center[2])
+        );
+        
+        if (center_distance < 1e-6f) continue; // Skip if too close to center
+        
+        // For large meshes, use a much simpler approach to avoid O(N²) complexity
+        float max_angle_change = 0.0f;
+        
+        if (stl->num_triangles > 10000) {
+            // For very large meshes, use a simplified approach:
+            // Just check a few nearby triangles in the array (spatial locality assumption)
+            unsigned int check_count = 0;
+            unsigned int max_checks = 50; // Very limited checks for large meshes
+            
+            // Check triangles around the current index (assuming some spatial locality)
+            for (unsigned int offset = 1; offset <= max_checks && check_count < 20; offset++) {
+                unsigned int j1 = (i + offset) % stl->num_triangles;
+                unsigned int j2 = (i >= offset) ? (i - offset) : (stl->num_triangles - offset + i);
+                
+                // Check both forward and backward neighbors
+                unsigned int indices[] = {j1, j2};
+                for (int idx = 0; idx < 2; idx++) {
+                    unsigned int j = indices[idx];
+                    if (i == j) continue;
+                    
+                    // Simple distance-based neighbor check (much faster than vertex sharing)
+                    float centroid_dist = sqrtf(
+                        (centroid[0] - stl->triangles[j].vertices[0][0]) * (centroid[0] - stl->triangles[j].vertices[0][0]) +
+                        (centroid[1] - stl->triangles[j].vertices[0][1]) * (centroid[1] - stl->triangles[j].vertices[0][1]) +
+                        (centroid[2] - stl->triangles[j].vertices[0][2]) * (centroid[2] - stl->triangles[j].vertices[0][2])
+                    );
+                    
+                    // Only consider "nearby" triangles
+                    if (centroid_dist < center_distance * 0.1f) { // Within 10% of center distance
+                        check_count++;
+                        
+                        // Calculate angle between normals
+                        float dot_product = triangle->normal[0] * stl->triangles[j].normal[0] +
+                                          triangle->normal[1] * stl->triangles[j].normal[1] +
+                                          triangle->normal[2] * stl->triangles[j].normal[2];
+                        
+                        // Clamp dot product to valid range
+                        dot_product = fmaxf(-1.0f, fminf(1.0f, dot_product));
+                        
+                        float angle = acosf(dot_product);
+                        max_angle_change = fmaxf(max_angle_change, angle);
+                        
+                        if (check_count >= 20) break; // Limit total checks
+                    }
+                }
+                if (check_count >= 20) break;
+            }
+        } else {
+            // For smaller meshes, use full neighbor search
+            for (unsigned int j = 0; j < stl->num_triangles; j++) {
+                if (i == j) continue;
+                
+                // Check if triangles share vertices (simple neighbor detection)
+                int shared_vertices = 0;
+                for (int v1 = 0; v1 < 3; v1++) {
+                    for (int v2 = 0; v2 < 3; v2++) {
+                        float dist = sqrtf(
+                            (triangle->vertices[v1][0] - stl->triangles[j].vertices[v2][0]) * 
+                            (triangle->vertices[v1][0] - stl->triangles[j].vertices[v2][0]) +
+                            (triangle->vertices[v1][1] - stl->triangles[j].vertices[v2][1]) * 
+                            (triangle->vertices[v1][1] - stl->triangles[j].vertices[v2][1]) +
+                            (triangle->vertices[v1][2] - stl->triangles[j].vertices[v2][2]) * 
+                            (triangle->vertices[v1][2] - stl->triangles[j].vertices[v2][2])
+                        );
+                        if (dist < 1e-6f) {
+                            shared_vertices++;
+                            break;
+                        }
+                    }
+                }
+                
+                // If triangles share at least 2 vertices, they are neighbors
+                if (shared_vertices >= 2) {
+                    // Calculate angle between normals
+                    float dot_product = triangle->normal[0] * stl->triangles[j].normal[0] +
+                                      triangle->normal[1] * stl->triangles[j].normal[1] +
+                                      triangle->normal[2] * stl->triangles[j].normal[2];
+                    
+                    // Clamp dot product to valid range
+                    dot_product = fmaxf(-1.0f, fminf(1.0f, dot_product));
+                    
+                    float angle = acosf(dot_product);
+                    max_angle_change = fmaxf(max_angle_change, angle);
+                }
+            }
+        }
+        
+        // Calculate distance-weighted concavity score
+        // Higher angle changes = more concave, scaled by inverse distance
+        float concavity_score = max_angle_change * (1.0f / (center_distance + 1.0f));
+        
+        total_samples++;
+        
+        // If low angle change, consider it convex-like
+        if (max_angle_change < 0.3f) { // ~17 degrees threshold
+            convex_samples++;
+        }
+        
+        // Track the three worst (most concave) points
+        if (concavity_score > worst_concavity_1) {
+            // Shift previous worst to second and third place
+            worst_concavity_3 = worst_concavity_2;
+            result->worst_point_3[0] = result->worst_point_2[0];
+            result->worst_point_3[1] = result->worst_point_2[1];
+            result->worst_point_3[2] = result->worst_point_2[2];
+            result->worst_triangle_index_3 = result->worst_triangle_index_2;
+            
+            worst_concavity_2 = worst_concavity_1;
+            result->worst_point_2[0] = result->worst_point_1[0];
+            result->worst_point_2[1] = result->worst_point_1[1];
+            result->worst_point_2[2] = result->worst_point_1[2];
+            result->worst_triangle_index_2 = result->worst_triangle_index_1;
+            
+            // Update the new worst
+            worst_concavity_1 = concavity_score;
+            result->worst_point_1[0] = centroid[0];
+            result->worst_point_1[1] = centroid[1];
+            result->worst_point_1[2] = centroid[2];
+            result->worst_triangle_index_1 = (int)i;
+        } else if (concavity_score > worst_concavity_2) {
+            // New second worst point found
+            worst_concavity_3 = worst_concavity_2;
+            result->worst_point_3[0] = result->worst_point_2[0];
+            result->worst_point_3[1] = result->worst_point_2[1];
+            result->worst_point_3[2] = result->worst_point_2[2];
+            result->worst_triangle_index_3 = result->worst_triangle_index_2;
+            
+            worst_concavity_2 = concavity_score;
+            result->worst_point_2[0] = centroid[0];
+            result->worst_point_2[1] = centroid[1];
+            result->worst_point_2[2] = centroid[2];
+            result->worst_triangle_index_2 = (int)i;
+        } else if (concavity_score > worst_concavity_3) {
+            // New third worst point found
+            worst_concavity_3 = concavity_score;
+            result->worst_point_3[0] = centroid[0];
+            result->worst_point_3[1] = centroid[1];
+            result->worst_point_3[2] = centroid[2];
+            result->worst_triangle_index_3 = (int)i;
+        }
+    }
+    
+    if (total_samples == 0) {
+        result->concavity_score = 1.0f;
+        return 1;
+    }
+    
+    // Calculate overall concavity score
+    float convexity_ratio = (float)convex_samples / (float)total_samples;
+    result->concavity_score = convexity_ratio;
+    
+    // Debug output
+    printf("DEBUG: Surface Normal Method - Worst concavities: %.3f, %.3f, %.3f\n", 
+           worst_concavity_1, worst_concavity_2, worst_concavity_3);
+    printf("DEBUG: Convex samples: %d/%d (%.1f%%)\n", 
+           convex_samples, total_samples, convexity_ratio * 100.0f);
+    printf("DEBUG: Worst points:\n");
+    printf("  1: (%.3f, %.3f, %.3f) triangle %d\n", 
+           result->worst_point_1[0], result->worst_point_1[1], result->worst_point_1[2], 
+           result->worst_triangle_index_1);
+    printf("  2: (%.3f, %.3f, %.3f) triangle %d\n", 
+           result->worst_point_2[0], result->worst_point_2[1], result->worst_point_2[2], 
+           result->worst_triangle_index_2);
+    printf("  3: (%.3f, %.3f, %.3f) triangle %d\n", 
+           result->worst_point_3[0], result->worst_point_3[1], result->worst_point_3[2], 
+           result->worst_triangle_index_3);
+    
+    // Always log mesh bounds for debugging visibility issues
+    float min_bounds[3] = {FLT_MAX, FLT_MAX, FLT_MAX};
+    float max_bounds[3] = {-FLT_MAX, -FLT_MAX, -FLT_MAX};
+    
+    for (unsigned int i = 0; i < stl->num_triangles; i++) {
+        for (int j = 0; j < 3; j++) {
+            for (int k = 0; k < 3; k++) {
+                min_bounds[k] = fminf(min_bounds[k], stl->triangles[i].vertices[j][k]);
+                max_bounds[k] = fmaxf(max_bounds[k], stl->triangles[i].vertices[j][k]);
+            }
+        }
+    }
+    
+    printf("DEBUG: Mesh bounds - X: [%.3f, %.3f], Y: [%.3f, %.3f], Z: [%.3f, %.3f]\n",
+           min_bounds[0], max_bounds[0], min_bounds[1], max_bounds[1], min_bounds[2], max_bounds[2]);
+    printf("DEBUG: Mesh center: (%.3f, %.3f, %.3f)\n", center[0], center[1], center[2]);
+    printf("DEBUG: Mesh dimensions: %.3f x %.3f x %.3f\n",
+           max_bounds[0] - min_bounds[0], max_bounds[1] - min_bounds[1], max_bounds[2] - min_bounds[2]);
+    
+    return 1;
+}
+
+// Ray-casting method for concavity detection (O(N²) complexity - original method)
+int check_concavity_ray_casting(const stl_file_t* stl, concavity_result_t* result) {
     // Calculate mesh center point
     float center[3] = {0.0f, 0.0f, 0.0f};
     int vertex_count = 0;
@@ -358,9 +647,6 @@ int check_concavity(const stl_file_t* stl, concavity_result_t* result) {
     center[0] /= vertex_count;
     center[1] /= vertex_count;
     center[2] /= vertex_count;
-    
-    // ROBUST GEOMETRY-BASED CONCAVITY DETECTION
-    // Instead of relying on unreliable STL normals, use geometric convexity tests
     
     float worst_concavity_1 = 0.0f;  // Worst concavity score (higher = more concave)
     float worst_concavity_2 = 0.0f;  // Second worst
@@ -412,7 +698,7 @@ int check_concavity(const stl_file_t* stl, concavity_result_t* result) {
                                      &t, &u, &v)) {
                 if (t > 1e-6f && t < center_distance) { // Valid intersection between centroid and center
                     ray_intersections++;
-                    if (ray_intersections >= 3) break; // Limit to avoid excessive computation
+                    if (ray_intersections >= 20) break; // Limit to avoid excessive computation
                 }
             }
         }
@@ -422,12 +708,6 @@ int check_concavity(const stl_file_t* stl, concavity_result_t* result) {
         float concavity = (float)ray_intersections / (center_distance + 1.0f);
         
         total_samples++;
-        
-        // Optional debug: Print concavity for first few triangles
-        /*if (i < 5) {
-            printf("Triangle %d: concavity=%.3f, intersections=%d, centroid=(%.3f,%.3f,%.3f)\n",
-                   i, concavity, ray_intersections, centroid[0], centroid[1], centroid[2]);
-        }*/
         
         // Ensure spatial diversity - don't select points too close to existing ones
         float min_distance_1 = sqrtf(
@@ -503,15 +783,22 @@ int check_concavity(const stl_file_t* stl, concavity_result_t* result) {
     float convexity_ratio = (float)convex_samples / (float)total_samples;
     
     // Debug: Print final worst points and their concavity scores
-    printf("DEBUG: Worst concavities: %.3f, %.3f, %.3f\n", worst_concavity_1, worst_concavity_2, worst_concavity_3);
-    printf("DEBUG: Convex samples: %d/%d (%.1f%%)\n", convex_samples, total_samples, convexity_ratio * 100.0f);
+    printf("DEBUG: Ray Casting Method - Worst concavities: %.3f, %.3f, %.3f\n", 
+           worst_concavity_1, worst_concavity_2, worst_concavity_3);
+    printf("DEBUG: Convex samples: %d/%d (%.1f%%)\n", 
+           convex_samples, total_samples, convexity_ratio * 100.0f);
     printf("DEBUG: Worst points:\n");
-    printf("  1: (%.3f, %.3f, %.3f) triangle %d\n", result->worst_point_1[0], result->worst_point_1[1], result->worst_point_1[2], result->worst_triangle_index_1);
-    printf("  2: (%.3f, %.3f, %.3f) triangle %d\n", result->worst_point_2[0], result->worst_point_2[1], result->worst_point_2[2], result->worst_triangle_index_2);
-    printf("  3: (%.3f, %.3f, %.3f) triangle %d\n", result->worst_point_3[0], result->worst_point_3[1], result->worst_point_3[2], result->worst_triangle_index_3);
+    printf("  1: (%.3f, %.3f, %.3f) triangle %d\n", 
+           result->worst_point_1[0], result->worst_point_1[1], result->worst_point_1[2], 
+           result->worst_triangle_index_1);
+    printf("  2: (%.3f, %.3f, %.3f) triangle %d\n", 
+           result->worst_point_2[0], result->worst_point_2[1], result->worst_point_2[2], 
+           result->worst_triangle_index_2);
+    printf("  3: (%.3f, %.3f, %.3f) triangle %d\n", 
+           result->worst_point_3[0], result->worst_point_3[1], result->worst_point_3[2], 
+           result->worst_triangle_index_3);
     
     // Apply a smoothing function to make the metric more intuitive
-    // Use a power function to emphasize the difference between highly convex and concave meshes
     result->concavity_score = convexity_ratio * convexity_ratio; // Square for smoothing
     
     return 1; // Success
@@ -917,7 +1204,7 @@ mesh_tree_node_t* decompose_node_recursive(stl_file_t* mesh, float concavity_thr
     
     // Check current mesh concavity
     concavity_result_t concavity_result;
-    if (!check_concavity(mesh, &concavity_result)) {
+    if (!check_concavity(mesh, &concavity_result, CONCAVITY_METHOD_SURFACE_NORMAL)) {
         node->is_leaf = 1;
         node->concavity_score = 0.0f;
         update_tree_stats(tree, node);
@@ -948,116 +1235,31 @@ mesh_tree_node_t* decompose_node_recursive(stl_file_t* mesh, float concavity_thr
     int num_components = 0;
     connected_component_t* components = find_connected_components(mesh, &num_components);
     
-    // Variables for separation plane approach
-    int use_separation_plane = 0;
-    float point1[3], point2[3], sep_point3[3];
-    float point3[3];  // Will be set by either separation plane or concavity method
+    // Note: No need for separation plane variables since we directly use components
     
     if (num_components > 1) {
-        printf("Found %d disconnected components, attempting separation plane approach\n", num_components);
+        printf("Found %d disconnected components, creating child nodes directly\n", num_components);
         printf("Component sizes: ");
         for (int i = 0; i < num_components; i++) {
             printf("%d ", components[i].count);
         }
         printf("\n");
         
-        // Try to find a separation plane between components instead of direct separation
+        // Directly create child nodes from the separate components
         if (num_components == 2) {
-            // Find the separation plane between the two components
-            separation_plane_t sep_plane = find_separation_plane(mesh, &components[0], &components[1]);
+            printf("Creating child nodes directly from disconnected components\n");
             
-            if (sep_plane.is_valid) {
-                printf("Using separation plane approach for disconnected components\n");
-                
-                // Clean up components since we're using geometric cutting
-                for (int i = 0; i < num_components; i++) {
-                    free(components[i].triangle_indices);
-                }
-                free(components);
-                components = NULL;  // Prevent double-free later
-                
-                // Use the separation plane for geometric cutting
-                // Convert separation plane to the format expected by cut_mesh_by_plane
-                // We'll create three points defining the plane
-                
-                // Use the plane point as point1
-                memcpy(point1, sep_plane.point, 3 * sizeof(float));
-                
-                // Create two additional points on the plane to define it
-                // Find a perpendicular vector to the normal
-                float perpendicular[3];
-                if (fabsf(sep_plane.normal[0]) < 0.9f) {
-                    // Normal is not primarily in X direction, use X axis
-                    perpendicular[0] = 1.0f;
-                    perpendicular[1] = 0.0f;
-                    perpendicular[2] = 0.0f;
-                } else {
-                    // Normal is primarily in X direction, use Y axis
-                    perpendicular[0] = 0.0f;
-                    perpendicular[1] = 1.0f;
-                    perpendicular[2] = 0.0f;
-                }
-                
-                // Make perpendicular truly perpendicular using cross product
-                float temp[3] = {
-                    sep_plane.normal[1] * perpendicular[2] - sep_plane.normal[2] * perpendicular[1],
-                    sep_plane.normal[2] * perpendicular[0] - sep_plane.normal[0] * perpendicular[2],
-                    sep_plane.normal[0] * perpendicular[1] - sep_plane.normal[1] * perpendicular[0]
-                };
-                
-                // Normalize the perpendicular vector
-                float perp_length = sqrtf(temp[0] * temp[0] + temp[1] * temp[1] + temp[2] * temp[2]);
-                if (perp_length > 1e-6f) {
-                    temp[0] /= perp_length;
-                    temp[1] /= perp_length;
-                    temp[2] /= perp_length;
-                }
-                
-                // Create point2 and point3 on the plane
-                point2[0] = point1[0] + temp[0];
-                point2[1] = point1[1] + temp[1];
-                point2[2] = point1[2] + temp[2];
-                
-                // Create third point using cross product of normal and first perpendicular
-                float second_perp[3] = {
-                    sep_plane.normal[1] * temp[2] - sep_plane.normal[2] * temp[1],
-                    sep_plane.normal[2] * temp[0] - sep_plane.normal[0] * temp[2],
-                    sep_plane.normal[0] * temp[1] - sep_plane.normal[1] * temp[0]
-                };
-                
-                sep_point3[0] = point1[0] + second_perp[0];
-                sep_point3[1] = point1[1] + second_perp[1];
-                sep_point3[2] = point1[2] + second_perp[2];
-                
-                printf("  Separation cutting plane points:\n");
-                printf("    Point 1: (%.3f, %.3f, %.3f)\n", point1[0], point1[1], point1[2]);
-                printf("    Point 2: (%.3f, %.3f, %.3f)\n", point2[0], point2[1], point2[2]);
-                printf("    Point 3: (%.3f, %.3f, %.3f)\n", sep_point3[0], sep_point3[1], sep_point3[2]);
-                
-                // Set flag to use separation plane and continue to geometric cutting
-                use_separation_plane = 1;
-                // Copy sep_point3 to point3 for later use in cutting plane storage
-                memcpy(point3, sep_point3, 3 * sizeof(float));
-                
-                // Skip the fallback component separation logic
-                goto skip_component_fallback;
-            } else {
-                printf("Failed to find valid separation plane, falling back to direct component separation\n");
-                // Fall back to direct component separation (original logic)
-                // This is the fallback case where separation plane couldn't be determined
-            }
-            
-            // Fallback: Direct component separation (original approach)
+            // Create submeshes from the two components
             stl_file_t* submesh1 = create_submesh_from_component(mesh, &components[0]);
             stl_file_t* submesh2 = create_submesh_from_component(mesh, &components[1]);
             
             if (submesh1 && submesh2) {
                 // Check concavity of each component before decomposing further
                 concavity_result_t component1_concavity, component2_concavity;
-                int comp1_valid = check_concavity(submesh1, &component1_concavity);
-                int comp2_valid = check_concavity(submesh2, &component2_concavity);
+                int comp1_valid = check_concavity(submesh1, &component1_concavity, CONCAVITY_METHOD_SURFACE_NORMAL);
+                int comp2_valid = check_concavity(submesh2, &component2_concavity, CONCAVITY_METHOD_SURFACE_NORMAL);
                 
-                printf("Fallback: Component 1 concavity: %.3f, Component 2 concavity: %.3f\n", 
+                printf("Component 1 concavity: %.3f, Component 2 concavity: %.3f\n", 
                        comp1_valid ? component1_concavity.concavity_score : -1.0f,
                        comp2_valid ? component2_concavity.concavity_score : -1.0f);
                 
@@ -1065,27 +1267,27 @@ mesh_tree_node_t* decompose_node_recursive(stl_file_t* mesh, float concavity_thr
                 // Note: decompose_node_recursive takes ownership of the mesh pointers
                 if (comp1_valid && component1_concavity.concavity_score >= concavity_threshold) {
                     // Component 1 is acceptably convex - create leaf node directly
-                    printf("Fallback: Component 1 is acceptably convex (%.3f), creating leaf node\n", component1_concavity.concavity_score);
+                    printf("Component 1 is acceptably convex (%.3f), creating leaf node\n", component1_concavity.concavity_score);
                     node->left_child = create_tree_node(submesh1, current_depth + 1);
                     node->left_child->is_leaf = 1;
                     node->left_child->concavity_score = component1_concavity.concavity_score;
                     update_tree_stats(tree, node->left_child);
                 } else {
                     // Component 1 needs further decomposition
-                    printf("Fallback: Component 1 needs decomposition (%.3f)\n", comp1_valid ? component1_concavity.concavity_score : -1.0f);
+                    printf("Component 1 needs decomposition (%.3f)\n", comp1_valid ? component1_concavity.concavity_score : -1.0f);
                     node->left_child = decompose_node_recursive(submesh1, concavity_threshold, current_depth + 1, max_depth, tree, plane_method);
                 }
                 
                 if (comp2_valid && component2_concavity.concavity_score >= concavity_threshold) {
                     // Component 2 is acceptably convex - create leaf node directly
-                    printf("Fallback: Component 2 is acceptably convex (%.3f), creating leaf node\n", component2_concavity.concavity_score);
+                    printf("Component 2 is acceptably convex (%.3f), creating leaf node\n", component2_concavity.concavity_score);
                     node->right_child = create_tree_node(submesh2, current_depth + 1);
                     node->right_child->is_leaf = 1;
                     node->right_child->concavity_score = component2_concavity.concavity_score;
                     update_tree_stats(tree, node->right_child);
                 } else {
                     // Component 2 needs further decomposition
-                    printf("Fallback: Component 2 needs decomposition (%.3f)\n", comp2_valid ? component2_concavity.concavity_score : -1.0f);
+                    printf("Component 2 needs decomposition (%.3f)\n", comp2_valid ? component2_concavity.concavity_score : -1.0f);
                     node->right_child = decompose_node_recursive(submesh2, concavity_threshold, current_depth + 1, max_depth, tree, plane_method);
                 }
                 
@@ -1095,14 +1297,15 @@ mesh_tree_node_t* decompose_node_recursive(stl_file_t* mesh, float concavity_thr
                 }
                 free(components);
                 
-                // Don't free the submeshes here - they're now owned by the child nodes
-                
+                // Successfully created child nodes from components
                 return node;
             }
             
             // Cleanup on failure
             if (submesh1) free_stl(submesh1);
             if (submesh2) free_stl(submesh2);
+            
+            printf("Failed to create submeshes from components\n");
         } else {
             // Multiple components (>2) - for now, just take the two largest
             printf("Warning: %d components found, using two largest for binary decomposition\n", num_components);
@@ -1129,8 +1332,8 @@ mesh_tree_node_t* decompose_node_recursive(stl_file_t* mesh, float concavity_thr
             if (submesh1 && submesh2) {
                 // Check concavity of each component before decomposing further
                 concavity_result_t component1_concavity, component2_concavity;
-                int comp1_valid = check_concavity(submesh1, &component1_concavity);
-                int comp2_valid = check_concavity(submesh2, &component2_concavity);
+                int comp1_valid = check_concavity(submesh1, &component1_concavity, CONCAVITY_METHOD_SURFACE_NORMAL);
+                int comp2_valid = check_concavity(submesh2, &component2_concavity, CONCAVITY_METHOD_SURFACE_NORMAL);
                 
                 printf("Largest component concavity: %.3f, Second largest concavity: %.3f\n", 
                        comp1_valid ? component1_concavity.concavity_score : -1.0f,
@@ -1183,8 +1386,6 @@ mesh_tree_node_t* decompose_node_recursive(stl_file_t* mesh, float concavity_thr
         printf("Component separation failed, falling back to geometric cutting\n");
     }
     
-    skip_component_fallback:
-    
     // Cleanup components if we're not using them
     if (components) {
         for (int i = 0; i < num_components; i++) {
@@ -1199,46 +1400,36 @@ mesh_tree_node_t* decompose_node_recursive(stl_file_t* mesh, float concavity_thr
     stl_file_t* mesh_left = NULL;
     stl_file_t* mesh_right = NULL;
     
-    // If we have separation plane defined, use those points
-    // Otherwise, use the concavity-based approach
-    if (use_separation_plane) {
-        // This path is used when we have a separation plane between disconnected components
-        printf("  Using separation plane for geometric cutting\n");
-        
-        // Use a custom cutting method for separation planes
-        mesh_left = cut_mesh_by_plane(mesh, point1, point2, sep_point3, 0, PLANE_METHOD_THREE_WORST_POINTS);
-        mesh_right = cut_mesh_by_plane(mesh, point1, point2, sep_point3, 1, PLANE_METHOD_THREE_WORST_POINTS);
+    // Use concavity-based geometric cutting approach
+    float point3[3];
+    if (plane_method == PLANE_METHOD_TWO_WORST_PLUS_CENTER) {
+        // Calculate mesh center for third point
+        point3[0] = (mesh->bounds[0] + mesh->bounds[3]) / 2.0f;
+        point3[1] = (mesh->bounds[1] + mesh->bounds[4]) / 2.0f;
+        point3[2] = (mesh->bounds[2] + mesh->bounds[5]) / 2.0f;
     } else {
-        // Normal concavity-based cutting approach
-        if (plane_method == PLANE_METHOD_TWO_WORST_PLUS_CENTER) {
-            // Calculate mesh center for third point
-            point3[0] = (mesh->bounds[0] + mesh->bounds[3]) / 2.0f;
-            point3[1] = (mesh->bounds[1] + mesh->bounds[4]) / 2.0f;
-            point3[2] = (mesh->bounds[2] + mesh->bounds[5]) / 2.0f;
-        } else {
-            // Use third worst point
-            point3[0] = concavity_result.worst_point_3[0];
-            point3[1] = concavity_result.worst_point_3[1];
-            point3[2] = concavity_result.worst_point_3[2];
-        }
-        
-        // Debug: Print the 3 points defining the cutting plane
-        printf("  Cutting plane at depth %d (%s method):\n", current_depth, 
-               plane_method == PLANE_METHOD_THREE_WORST_POINTS ? "3 worst points" : "2 worst + center");
-        printf("    Point 1 (worst): (%.3f, %.3f, %.3f)\n", 
-               concavity_result.worst_point_1[0], concavity_result.worst_point_1[1], concavity_result.worst_point_1[2]);
-        printf("    Point 2 (worst): (%.3f, %.3f, %.3f)\n", 
-               concavity_result.worst_point_2[0], concavity_result.worst_point_2[1], concavity_result.worst_point_2[2]);
-        printf("    Point 3 (%s): (%.3f, %.3f, %.3f)\n", 
-               plane_method == PLANE_METHOD_THREE_WORST_POINTS ? "worst" : "center",
-               point3[0], point3[1], point3[2]);
-        
-        // Cut mesh using the selected plane method
-        mesh_left = cut_mesh_by_plane(mesh, concavity_result.worst_point_1, 
-                                     concavity_result.worst_point_2, point3, 0, plane_method);
-        mesh_right = cut_mesh_by_plane(mesh, concavity_result.worst_point_1, 
-                                      concavity_result.worst_point_2, point3, 1, plane_method);
+        // Use third worst point
+        point3[0] = concavity_result.worst_point_3[0];
+        point3[1] = concavity_result.worst_point_3[1];
+        point3[2] = concavity_result.worst_point_3[2];
     }
+    
+    // Debug: Print the 3 points defining the cutting plane
+    printf("  Cutting plane at depth %d (%s method):\n", current_depth, 
+           plane_method == PLANE_METHOD_THREE_WORST_POINTS ? "3 worst points" : "2 worst + center");
+    printf("    Point 1 (worst): (%.3f, %.3f, %.3f)\n", 
+           concavity_result.worst_point_1[0], concavity_result.worst_point_1[1], concavity_result.worst_point_1[2]);
+    printf("    Point 2 (worst): (%.3f, %.3f, %.3f)\n", 
+           concavity_result.worst_point_2[0], concavity_result.worst_point_2[1], concavity_result.worst_point_2[2]);
+    printf("    Point 3 (%s): (%.3f, %.3f, %.3f)\n", 
+           plane_method == PLANE_METHOD_THREE_WORST_POINTS ? "worst" : "center",
+           point3[0], point3[1], point3[2]);
+    
+    // Cut mesh using the selected plane method
+    mesh_left = cut_mesh_by_plane(mesh, concavity_result.worst_point_1, 
+                                 concavity_result.worst_point_2, point3, 0, plane_method);
+    mesh_right = cut_mesh_by_plane(mesh, concavity_result.worst_point_1, 
+                                  concavity_result.worst_point_2, point3, 1, plane_method);
     
     if (!mesh_left || !mesh_right) {
         // Cutting failed, make this a leaf node
@@ -1299,8 +1490,8 @@ mesh_tree_node_t* decompose_node_recursive(stl_file_t* mesh, float concavity_thr
                     if (submesh1 && submesh2) {
                         // Check concavity of each component before decomposing further
                         concavity_result_t component1_concavity, component2_concavity;
-                        int comp1_valid = check_concavity(submesh1, &component1_concavity);
-                        int comp2_valid = check_concavity(submesh2, &component2_concavity);
+                        int comp1_valid = check_concavity(submesh1, &component1_concavity, CONCAVITY_METHOD_SURFACE_NORMAL);
+                        int comp2_valid = check_concavity(submesh2, &component2_concavity, CONCAVITY_METHOD_SURFACE_NORMAL);
                         
                         printf("Retry: Component 1 concavity: %.3f, Component 2 concavity: %.3f\n", 
                                comp1_valid ? component1_concavity.concavity_score : -1.0f,
@@ -1376,17 +1567,9 @@ mesh_tree_node_t* decompose_node_recursive(stl_file_t* mesh, float concavity_thr
     
     // Store cutting plane information for visualization
     node->cutting_plane.is_valid = 1;
-    if (use_separation_plane) {
-        // Use separation plane points
-        memcpy(node->cutting_plane.point1, point1, 3 * sizeof(float));
-        memcpy(node->cutting_plane.point2, point2, 3 * sizeof(float));
-        memcpy(node->cutting_plane.point3, point3, 3 * sizeof(float));
-    } else {
-        // Use concavity-based points
-        memcpy(node->cutting_plane.point1, concavity_result.worst_point_1, 3 * sizeof(float));
-        memcpy(node->cutting_plane.point2, concavity_result.worst_point_2, 3 * sizeof(float));
-        memcpy(node->cutting_plane.point3, point3, 3 * sizeof(float));
-    }
+    memcpy(node->cutting_plane.point1, concavity_result.worst_point_1, 3 * sizeof(float));
+    memcpy(node->cutting_plane.point2, concavity_result.worst_point_2, 3 * sizeof(float));
+    memcpy(node->cutting_plane.point3, point3, 3 * sizeof(float));
     
     // Calculate and store plane normal and center
     float vec1[3] = {

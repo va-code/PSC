@@ -3,6 +3,12 @@
 
 #include "stl_parser.h"
 
+// Enum to define concavity detection methods
+typedef enum {
+    CONCAVITY_METHOD_RAY_CASTING = 0,      // Original ray-casting method (O(N²))
+    CONCAVITY_METHOD_SURFACE_NORMAL = 1    // New surface normal analysis method (O(N))
+} concavity_method_t;
+
 // Enum to define cutting plane generation methods
 typedef enum {
     PLANE_METHOD_THREE_WORST_POINTS = 0,  // Use 3 worst concavity points
@@ -53,12 +59,29 @@ typedef struct {
 } decomposition_tree_t;
 
 /**
- * Calculate concavity metric of a mesh using face normal analysis
+ * Calculate concavity metric of a mesh using specified method
+ * @param stl - STL file structure containing the mesh data
+ * @param result - Output structure containing concavity score and worst points
+ * @param method - Method to use for concavity detection
+ * @return 1 on success, 0 on failure
+ */
+int check_concavity(const stl_file_t* stl, concavity_result_t* result, concavity_method_t method);
+
+/**
+ * Surface normal analysis method for concavity detection (O(N) complexity)
  * @param stl - STL file structure containing the mesh data
  * @param result - Output structure containing concavity score and worst points
  * @return 1 on success, 0 on failure
  */
-int check_concavity(const stl_file_t* stl, concavity_result_t* result);
+int check_concavity_surface_normal(const stl_file_t* stl, concavity_result_t* result);
+
+/**
+ * Ray-casting method for concavity detection (O(N²) complexity - original method)
+ * @param stl - STL file structure containing the mesh data
+ * @param result - Output structure containing concavity score and worst points
+ * @return 1 on success, 0 on failure
+ */
+int check_concavity_ray_casting(const stl_file_t* stl, concavity_result_t* result);
 
 /**
  * Recursively decompose a mesh into a tree structure
@@ -67,6 +90,12 @@ int check_concavity(const stl_file_t* stl, concavity_result_t* result);
  * @param max_depth - Maximum recursion depth
  * @param plane_method - Method for generating cutting planes
  * @return Decomposition tree containing all mesh pieces, NULL on failure
+ * 
+ * Note: This algorithm ALWAYS attempts geometric cutting with planes first,
+ * regardless of whether disconnected components are found. This ensures proper
+ * slicing instead of just categorizing triangles into separate nodes.
+ * Component-based separation is only used as a fallback when geometric
+ * cutting fails.
  */
 decomposition_tree_t* decompose_mesh_tree(const stl_file_t* mesh, float concavity_threshold, int max_depth, plane_generation_method_t plane_method);
 

@@ -558,8 +558,25 @@ void viewer_display(stl_viewer_t* viewer) {
     // Set up projection matrix
     float aspect = (float)viewer->window_width / (float)viewer->window_height;
     float fov = 45.0f * M_PI / 180.0f;
-    float near = 0.1f;
-    float far = 100.0f;
+    
+    // Calculate dynamic clipping planes based on model size and camera distance
+    float camera_distance = sqrtf(
+        (viewer->camera_pos[0] - viewer->camera_target[0]) * (viewer->camera_pos[0] - viewer->camera_target[0]) +
+        (viewer->camera_pos[1] - viewer->camera_target[1]) * (viewer->camera_pos[1] - viewer->camera_target[1]) +
+        (viewer->camera_pos[2] - viewer->camera_target[2]) * (viewer->camera_pos[2] - viewer->camera_target[2])
+    );
+    
+    // Near plane: close to camera but not too close
+    float near = camera_distance * 0.01f;  // 1% of camera distance
+    if (near < 0.1f) near = 0.1f;  // Minimum near plane
+    
+    // Far plane: beyond the model, with some margin
+    float far = camera_distance * 2.0f;  // 2x camera distance for safety
+    
+    // Debug: Log clipping plane information (commented out to prevent terminal spam)
+    // printf("DEBUG: Camera distance: %.3f, Near plane: %.3f, Far plane: %.3f\n", 
+    //        camera_distance, near, far);
+    
     float f = 1.0f / tanf(fov / 2.0f);
     
     float projection[16] = {0};
@@ -1167,9 +1184,12 @@ int viewer_load_decomposition_tree(stl_viewer_t* viewer, const decomposition_tre
     float max_bounds[3] = {-FLT_MAX, -FLT_MAX, -FLT_MAX};
     
     // Calculate bounds from all decomposed mesh vertices
+    printf("DEBUG: Calculating bounds from %d leaf meshes\n", num_leaves);
     for (int leaf_idx = 0; leaf_idx < num_leaves; leaf_idx++) {
         const stl_file_t* mesh = leaves[leaf_idx]->mesh;
         if (!mesh) continue;
+        
+        printf("DEBUG: Leaf %d has %u triangles\n", leaf_idx, mesh->num_triangles);
         
         for (unsigned int i = 0; i < mesh->num_triangles; i++) {
             const stl_triangle_t* tri = &mesh->triangles[i];
@@ -1208,6 +1228,8 @@ int viewer_load_decomposition_tree(stl_viewer_t* viewer, const decomposition_tre
     viewer->camera_pos[0] = viewer->camera_target[0] + (dir_x * required_dist);
     viewer->camera_pos[1] = viewer->camera_target[1] + (dir_y * required_dist);
     viewer->camera_pos[2] = viewer->camera_target[2] + (dir_z * required_dist);
+    
+    // Log camera and model information for debugging (removed to prevent terminal spam)
     
     viewer->world_up[0] = 0.0f;
     viewer->world_up[1] = -1.0f;
