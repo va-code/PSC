@@ -4,6 +4,7 @@
 #include "stl_parser.h"
 #include "topology_evaluator.h"
 #include "PSC_model_inspector.h"
+#include "mesh_adjacency.h"
 
 
 void print_usage(const char* program_name) {
@@ -14,12 +15,14 @@ void print_usage(const char* program_name) {
     printf("  --convex <threshold> <depth>  Perform convex decomposition and visualize with random colors\n");
     printf("                       threshold: 0.0-1.0 (0.8 recommended)\n");
     printf("                       depth: max recursion depth (3-5 recommended)\n");
+    printf("  --export <output_dir> Export decomposed meshes and adjacency information\n");
+    printf("                       (requires --convex option)\n");
     printf("  --help               Show this help message\n\n");
     printf("Examples:\n");
     printf("  %s model.stl --topology complete\n", program_name);
     printf("  %s model.stl --convex 0.8 4\n", program_name);
+    printf("  %s model.stl --convex 0.8 4 --export ./output\n", program_name);
 }
-
 
 
 
@@ -41,9 +44,11 @@ int main(int argc, char* argv[]) {
     char* input_file = argv[1];
     int use_topology_analysis = 0;
     int use_convex_decomposition = 0;
+    int use_export = 0;
     topology_analysis_type_t topology_type = TOPO_ANALYSIS_COMPLETE;
     float convex_threshold = 0.8f;
     int convex_max_depth = 4;
+    char* export_output_dir = NULL;
 
     
     // Parse command line arguments  
@@ -64,6 +69,11 @@ int main(int argc, char* argv[]) {
             convex_max_depth = atoi(argv[++i]);
             printf("Convex decomposition enabled: threshold=%.3f, max_depth=%d\n", convex_threshold, convex_max_depth);
         }
+        else if (strcmp(argv[i], "--export") == 0 && i + 1 < argc) {
+            use_export = 1;
+            export_output_dir = argv[++i];
+            printf("Export enabled: output directory = %s\n", export_output_dir);
+        }
     }
     
     printf("PSC Model Inspector - 3D Model Analysis Tool\n");
@@ -80,8 +90,8 @@ int main(int argc, char* argv[]) {
     // Print STL information
     stl_print_info(stl);
     printf("\n");
-    
 
+    
     
     // Topology analysis
     topology_evaluation_t* topology_eval = NULL;
@@ -103,13 +113,59 @@ int main(int argc, char* argv[]) {
     }
     
     // Convex decomposition visualization
+    decomposition_tree_t* decomposition_tree = NULL;
     if (use_convex_decomposition) {
         printf("Starting convex decomposition visualization...\n");
         display_convex_decomposition_tree(stl, convex_threshold, convex_max_depth, PLANE_METHOD_TWO_WORST_PLUS_CENTER, 0);
+        
+        // Store the decomposition tree for export if needed
+        if (use_export) {
+            printf("Creating decomposition tree for export...\n");
+            decomposition_tree = decompose_mesh_tree(stl, convex_threshold, convex_max_depth, PLANE_METHOD_TWO_WORST_PLUS_CENTER);
+            if (!decomposition_tree) {
+                fprintf(stderr, "Warning: Failed to create decomposition tree for export\n");
+            }
+        }
+    }
+    
+    // Export functionality
+    if (use_export && decomposition_tree && export_output_dir) {
+        printf("\nExporting decomposed meshes and adjacency information...\n");
+        
+        // Create export data structure
+        mesh_export_data_t* export_data = create_export_data(decomposition_tree, input_file);
+        if (export_data) {
+            // Export individual meshes
+            if (export_individual_meshes(export_data, export_output_dir)) {
+                printf("Successfully exported %d individual mesh parts\n", export_data->num_meshes);
+            } else {
+                fprintf(stderr, "Warning: Failed to export individual meshes\n");
+            }
+            
+            // Export adjacency information
+            if (export_adjacency_info(export_data, export_output_dir)) {
+                printf("Successfully exported adjacency information\n");
+            } else {
+                fprintf(stderr, "Warning: Failed to export adjacency information\n");
+            }
+            
+            // Export complete decomposition information
+            if (export_decomposition_info_json(export_data, export_output_dir)) {
+                printf("Successfully exported decomposition information\n");
+            } else {
+                fprintf(stderr, "Warning: Failed to export decomposition information\n");
+            }
+            
+            // Cleanup export data
+            free_export_data(export_data);
+        } else {
+            fprintf(stderr, "Warning: Failed to create export data structure\n");
+        }
     }
     
     // Cleanup
     if (topology_eval) free_topology_evaluation(topology_eval);
+    if (decomposition_tree) free_decomposition_tree(decomposition_tree);
     stl_free(stl);
     
     printf("\nModel analysis completed successfully!\n");

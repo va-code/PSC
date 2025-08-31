@@ -447,3 +447,209 @@ This project is provided as-is for educational and research purposes.
 - Verify printer compatibility
 - Check G-code viewer for path visualization
 - Adjust speeds if printer cannot handle specified rates 
+
+# PSC Adjacency Detection and Mesh Saving
+
+This document describes the new functionality added to the PSC (Parametric Slicer) system for detecting adjacent meshes after decomposition and saving individual mesh parts.
+
+## Overview
+
+After a 3D model has been split apart using convex decomposition, the system can now:
+
+1. **Find adjacent meshes** - Detect which decomposed mesh parts share boundaries
+2. **Create adjacency lists** - Build a graph structure showing mesh relationships
+3. **Save individual meshes** - Export each decomposed part as a separate STL file
+4. **Save metadata** - Export comprehensive information about the decomposition and adjacencies
+
+## New Data Structures
+
+### Mesh Adjacency
+```c
+typedef struct {
+    int mesh1_id;                       // ID of first mesh
+    int mesh2_id;                       // ID of second mesh
+    int shared_edges;                   // Number of shared edges
+    float shared_area;                  // Area of shared boundary
+} mesh_adjacency_t;
+```
+
+### Adjacency Graph
+```c
+typedef struct {
+    int num_meshes;                     // Total number of meshes
+    int num_adjacencies;                // Total number of adjacencies
+    mesh_adjacency_t* adjacencies;      // Array of adjacency relationships
+    int* mesh_adjacency_counts;         // Number of adjacencies per mesh
+    int** mesh_adjacency_lists;         // Lists of adjacent mesh IDs for each mesh
+} adjacency_graph_t;
+```
+
+### Decomposition Metadata
+```c
+typedef struct {
+    char original_filename[256];         // Original STL filename
+    float concavity_threshold;          // Concavity threshold used
+    int max_depth;                      // Maximum depth reached
+    plane_generation_method_t plane_method; // Plane generation method used
+    int total_parts;                    // Total number of parts generated
+    float* part_concavity_scores;       // Concavity scores for each part
+    int* part_triangle_counts;          // Triangle counts for each part
+    float* part_bounds;                 // Bounding boxes for each part
+} decomposition_metadata_t;
+```
+
+## New Functions
+
+### Adjacency Detection
+- `find_mesh_adjacencies()` - Find all adjacent meshes in a decomposition tree
+- `free_adjacency_graph()` - Free memory allocated for adjacency graph
+
+### Mesh Saving
+- `save_decomposed_meshes()` - Save individual decomposed meshes as STL files
+- `save_decomposition_metadata()` - Save comprehensive metadata to JSON file
+
+### STL File Operations
+- `stl_save_binary()` - Save STL file in binary format
+- `stl_save_ascii()` - Save STL file in ASCII format
+- `stl_save()` - Save STL file in specified format
+
+## Usage
+
+### Command Line Interface
+
+The main program now supports a new option for saving decomposed meshes:
+
+```bash
+./parametric_slicer model.stl --save-decomposed 0.8 4 ./output decomposed
+```
+
+Parameters:
+- `0.8` - Concavity threshold
+- `4` - Maximum decomposition depth
+- `./output` - Output directory
+- `decomposed` - Base filename for output files
+
+### Programmatic Usage
+
+```c
+#include "convex_decomposition.h"
+#include "PSC_model_inspector.h"
+
+// Load and decompose mesh
+stl_file_t* stl = stl_load_file("model.stl");
+decomposition_tree_t* tree = decompose_mesh_tree(stl, 0.8f, 4, PLANE_METHOD_FACD_ADAPTIVE);
+
+// Find adjacencies
+adjacency_graph_t adjacency_graph;
+find_mesh_adjacencies(tree, &adjacency_graph);
+
+// Save meshes and metadata
+save_decomposed_meshes(tree, "./output", "decomposed");
+save_decomposition_metadata(tree, &adjacency_graph, "./output", "decomposed", 
+                           "model.stl", 0.8f, 4, PLANE_METHOD_FACD_ADAPTIVE);
+
+// Cleanup
+free_adjacency_graph(&adjacency_graph);
+free_decomposition_tree(tree);
+stl_free(stl);
+```
+
+### High-Level Function
+
+For convenience, use the combined function:
+
+```c
+save_decomposed_meshes_only(stl, 0.8f, 4, PLANE_METHOD_FACD_ADAPTIVE, 
+                           "./output", "decomposed", "model.stl");
+```
+
+## Output Files
+
+### Individual STL Files
+Each decomposed mesh part is saved as a separate STL file:
+- `decomposed_part_000.stl` - First mesh part
+- `decomposed_part_001.stl` - Second mesh part
+- `decomposed_part_002.stl` - Third mesh part
+- etc.
+
+### Metadata JSON File
+The `decomposed_metadata.json` file contains:
+
+```json
+{
+  "decomposition_info": {
+    "original_filename": "model.stl",
+    "concavity_threshold": 0.800000,
+    "max_depth": 4,
+    "plane_method": 3,
+    "total_parts": 5,
+    "total_nodes": 9,
+    "max_depth_reached": 3
+  },
+  "parts": [
+    {
+      "part_id": 0,
+      "filename": "decomposed_part_000.stl",
+      "triangle_count": 1250,
+      "concavity_score": 0.950000,
+      "depth": 2,
+      "bounds": [0.0, 0.0, 0.0, 10.0, 10.0, 5.0]
+    }
+  ],
+  "adjacencies": [
+    {
+      "mesh1_id": 0,
+      "mesh2_id": 1,
+      "shared_edges": 15,
+      "shared_area": 1.500000
+    }
+  ]
+}
+```
+
+## Testing
+
+A test program is included to demonstrate the functionality:
+
+```bash
+make test-adjacency
+./build/test_adjacency_and_saving A.stl
+```
+
+This will:
+1. Load the STL file
+2. Decompose it into convex parts
+3. Find adjacencies between parts
+4. Save individual parts as STL files
+5. Save metadata including adjacency information
+
+## Implementation Details
+
+### Adjacency Detection Algorithm
+The system detects adjacent meshes by:
+1. Finding triangles that share edges (exactly 2 vertices)
+2. Calculating shared boundary area
+3. Building an adjacency graph structure
+
+### Edge Detection
+Two triangles are considered to share an edge if they have exactly 2 vertices in common (within a small epsilon for floating-point precision).
+
+### Memory Management
+The adjacency graph uses dynamic memory allocation and includes proper cleanup functions to prevent memory leaks.
+
+## Integration
+
+The new functionality is fully integrated with the existing convex decomposition system:
+- Works with all existing decomposition methods
+- Preserves the decomposition tree structure
+- Maintains compatibility with existing visualization tools
+- Adds new capabilities without breaking existing functionality
+
+## Future Enhancements
+
+Potential improvements could include:
+- More sophisticated adjacency detection algorithms
+- Support for different output formats
+- Batch processing of multiple models
+- Adjacency visualization tools
+- Export to CAD formats (STEP, IGES, etc.)

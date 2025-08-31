@@ -9,11 +9,11 @@ BUILD_DIR = build
 TEST_DIR = tests
 
 # Source files for parametric_slicer (excluding convex decomposition)
-SRCS = src/main.c src/stl_parser.c src/topology_evaluator.c src/PSC_model_inspector.c
+SRCS = src/main.c src/stl_parser.c src/topology_evaluator.c src/PSC_model_inspector.c src/mesh_adjacency.c
 OBJS = $(patsubst src/%.c,$(BUILD_DIR)/%.o,$(SRCS))
 
 # Convex decomposition program
-CONVEX_SRCS = src/convex_main.c src/stl_parser.c src/topology_evaluator.c src/PSC_model_inspector.c src/convex_decomposition.c
+CONVEX_SRCS = src/convex_main.c src/stl_parser.c src/topology_evaluator.c src/PSC_model_inspector.c src/convex_decomposition.c src/mesh_adjacency.c
 CONVEX_OBJS = $(patsubst src/%.c,$(BUILD_DIR)/%.o,$(CONVEX_SRCS))
 CONVEX_TARGET = $(BUILD_DIR)/convex_decomposition
 

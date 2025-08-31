@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Adjacency Graph - A.stl</title>
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; background: #f5f5f5; }
+    .container { max-width: 1200px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+    h1 { color: #333; text-align: center; }
+    .graph-container { text-align: center; margin: 20px 0; }
+    .node { fill: #4CAF50; stroke: #2E7D32; stroke-width: 2; cursor: pointer; }
+    .node:hover { fill: #66BB6A; }
+    .node-text { fill: white; font-size: 12px; font-weight: bold; text-anchor: middle; pointer-events: none; }
+    .edge { stroke: #666; stroke-width: 2; }
+    .edge-text { font-size: 10px; fill: #666; pointer-events: none; }
+    .info-panel { background: #f8f9fa; padding: 15px; border-radius: 5px; margin: 20px 0; }
+    .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin: 20px 0; }
+    .stat-card { background: white; padding: 15px; border-radius: 5px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); text-align: center; }
+    .stat-number { font-size: 24px; font-weight: bold; color: #2196F3; }
+    .stat-label { color: #666; margin-top: 5px; }
+    .controls { text-align: center; margin: 20px 0; }
+    .btn { background: #2196F3; color: white; border: none; padding: 10px 20px; margin: 0 5px; border-radius: 5px; cursor: pointer; }
+    .btn:hover { background: #1976D2; }
+    .btn:active { background: #0D47A1; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Mesh Adjacency Graph</h1>
+    <div class="info-panel">
+      <h3>Model: A.stl</h3>
+      <p>This graph shows the spatial relationships between decomposed mesh pieces. Each node represents a mesh, and edges show which meshes are adjacent (share vertices).</p>
+      <p><strong>Tip:</strong> Drag nodes to rearrange the graph and minimize line overlaps. Use the controls below to reset or optimize the layout.</p>
+    </div>
+    <div class="stats">
+      <div class="stat-card">
+        <div class="stat-number">8</div>
+        <div class="stat-label">Total Meshes</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-number">15</div>
+        <div class="stat-label">Adjacencies</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-number">1.9</div>
+        <div class="stat-label">Avg Connections</div>
+      </div>
+    </div>
+    <div class="controls">
+      <button class="btn" onclick="resetLayout()">Reset Layout</button>
+      <button class="btn" onclick="optimizeLayout()">Optimize Layout</button>
+      <button class="btn" onclick="togglePhysics()">Toggle Physics</button>
+    </div>
+    <div class="graph-container">
+      <svg id="graph" width="1000" height="600" viewBox="0 0 1000 600">
+        <defs>
+          <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+            <feDropShadow dx="2" dy="2" stdDeviation="3" flood-color="rgba(0,0,0,0.3)"/>
+          </filter>
+        </defs>
+      </svg>
+    </div>
+    <div class="info-panel">
+      <h3>Mesh Details</h3>
+      <table style="width: 100%; border-collapse: collapse; margin-top: 15px;">
+        <tr style="background: #e9ecef;">
+          <th style="padding: 10px; text-align: left; border: 1px solid #dee2e6;">Mesh</th>
+          <th style="padding: 10px; text-align: left; border: 1px solid #dee2e6;">Filename</th>
+          <th style="padding: 10px; text-align: left; border: 1px solid #dee2e6;">Triangles</th>
+          <th style="padding: 10px; text-align: left; border: 1px solid #dee2e6;">Concavity</th>
+          <th style="padding: 10px; text-align: left; border: 1px solid #dee2e6;">Adjacencies</th>
+        </tr>
+        <tr>
+          <td style="padding: 10px; border: 1px solid #dee2e6; font-weight: bold;">0</td>
+          <td style="padding: 10px; border: 1px solid #dee2e6;">A.stl_part_000.stl</td>
+          <td style="padding: 10px; border: 1px solid #dee2e6;">123</td>
+          <td style="padding: 10px; border: 1px solid #dee2e6;">0.618</td>
+          <td style="padding: 10px; border: 1px solid #dee2e6;">8</td>
+        </tr>
+        <tr>
+          <td style="padding: 10px; border: 1px solid #dee2e6; font-weight: bold;">1</td>
+          <td style="padding: 10px; border: 1px solid #dee2e6;">A.stl_part_001.stl</td>
+          <td style="padding: 10px; border: 1px solid #dee2e6;">126</td>
+          <td style="padding: 10px; border: 1px solid #dee2e6;">0.889</td>
+          <td style="padding: 10px; border: 1px solid #dee2e6;">8</td>
+        </tr>
+        <tr>
+          <td style="padding: 10px; border: 1px solid #dee2e6; font-weight: bold;">2</td>
+          <td style="padding: 10px; border: 1px solid #dee2e6;">A.stl_part_002.stl</td>
+          <td style="padding: 10px; border: 1px solid #dee2e6;">35</td>
+          <td style="padding: 10px; border: 1px solid #dee2e6;">0.429</td>
+          <td style="padding: 10px; border: 1px solid #dee2e6;">8</td>
+        </tr>
+        <tr>
+          <td style="padding: 10px; border: 1px solid #dee2e6; font-weight: bold;">3</td>
+          <td style="padding: 10px; border: 1px solid #dee2e6;">A.stl_part_003.stl</td>
+          <td style="padding: 10px; border: 1px solid #dee2e6;">48</td>
+          <td style="padding: 10px; border: 1px solid #dee2e6;">0.917</td>
+          <td style="padding: 10px; border: 1px solid #dee2e6;">8</td>
+        </tr>
+        <tr>
+          <td style="padding: 10px; border: 1px solid #dee2e6; font-weight: bold;">4</td>
+          <td style="padding: 10px; border: 1px solid #dee2e6;">A.stl_part_004.stl</td>
+          <td style="padding: 10px; border: 1px solid #dee2e6;">116</td>
+          <td style="padding: 10px; border: 1px solid #dee2e6;">0.638</td>
+          <td style="padding: 10px; border: 1px solid #dee2e6;">8</td>
+        </tr>
+        <tr>
+          <td style="padding: 10px; border: 1px solid #dee2e6; font-weight: bold;">5</td>
+          <td style="padding: 10px; border: 1px solid #dee2e6;">A.stl_part_005.stl</td>
+          <td style="padding: 10px; border: 1px solid #dee2e6;">118</td>
+          <td style="padding: 10px; border: 1px solid #dee2e6;">0.890</td>
+          <td style="padding: 10px; border: 1px solid #dee2e6;">8</td>
+        </tr>
+        <tr>
+          <td style="padding: 10px; border: 1px solid #dee2e6; font-weight: bold;">6</td>
+          <td style="padding: 10px; border: 1px solid #dee2e6;">A.stl_part_006.stl</td>
+          <td style="padding: 10px; border: 1px solid #dee2e6;">35</td>
+          <td style="padding: 10px; border: 1px solid #dee2e6;">0.429</td>
+          <td style="padding: 10px; border: 1px solid #dee2e6;">8</td>
+        </tr>
+        <tr>
+          <td style="padding: 10px; border: 1px solid #dee2e6; font-weight: bold;">7</td>
+          <td style="padding: 10px; border: 1px solid #dee2e6;">A.stl_part_007.stl</td>
+          <td style="padding: 10px; border: 1px solid #dee2e6;">45</td>
+          <td style="padding: 10px; border: 1px solid #dee2e6;">0.911</td>
+          <td style="padding: 10px; border: 1px solid #dee2e6;">8</td>
+        </tr>
+      </table>
+    </div>
+    <script>
+      // Graph data
+      const graphData = {
+        nodes: [
+          { id: 0, name: "A.stl_part_000.stl", triangles: 123, concavity: 0.618, adjacencies: 4 },
+          { id: 1, name: "A.stl_part_001.stl", triangles: 126, concavity: 0.889, adjacencies: 4 },
+          { id: 2, name: "A.stl_part_002.stl", triangles: 35, concavity: 0.429, adjacencies: 3 },
+          { id: 3, name: "A.stl_part_003.stl", triangles: 48, concavity: 0.917, adjacencies: 4 },
+          { id: 4, name: "A.stl_part_004.stl", triangles: 116, concavity: 0.638, adjacencies: 4 },
+          { id: 5, name: "A.stl_part_005.stl", triangles: 118, concavity: 0.890, adjacencies: 4 },
+          { id: 6, name: "A.stl_part_006.stl", triangles: 35, concavity: 0.429, adjacencies: 3 },
+          { id: 7, name: "A.stl_part_007.stl", triangles: 45, concavity: 0.911, adjacencies: 4 }
+        ],
+        edges: [
+          { source: 0, target: 1, sharedVertices: 175, contactArea: 16.995 },
+          { source: 0, target: 4, sharedVertices: 9, contactArea: 1.345 },
+          { source: 0, target: 6, sharedVertices: 16, contactArea: 3.710 },
+          { source: 0, target: 7, sharedVertices: 11, contactArea: 1.316 },
+          { source: 1, target: 2, sharedVertices: 69, contactArea: 12.186 },
+          { source: 1, target: 3, sharedVertices: 102, contactArea: 4.216 },
+          { source: 1, target: 7, sharedVertices: 7, contactArea: 0.294 },
+          { source: 2, target: 4, sharedVertices: 17, contactArea: 4.500 },
+          { source: 2, target: 6, sharedVertices: 10, contactArea: 5.841 },
+          { source: 3, target: 4, sharedVertices: 20, contactArea: 2.284 },
+          { source: 3, target: 5, sharedVertices: 5, contactArea: 0.208 },
+          { source: 3, target: 7, sharedVertices: 41, contactArea: 1.370 },
+          { source: 4, target: 5, sharedVertices: 158, contactArea: 15.196 },
+          { source: 5, target: 6, sharedVertices: 66, contactArea: 10.103 },
+          { source: 5, target: 7, sharedVertices: 95, contactArea: 4.012 }
+        ]
+      };
+
+      // Force simulation
+      let simulation;
+      let physicsEnabled = true;
+      let svg, nodes, edges, edgeLabels;
+
+      // Initialize the graph
+      function initGraph() {
+        svg = document.getElementById('graph');
+        
+        // Create edges first (so they appear behind nodes)
+        edges = svg.selectAll('.edge')
+          .data(graphData.edges)
+          .enter()
+          .append('line')
+          .attr('class', 'edge')
+          .style('filter', 'url(#shadow)');
+        
+        edgeLabels = svg.selectAll('.edge-label')
+          .data(graphData.edges)
+          .enter()
+          .append('text')
+          .attr('class', 'edge-label edge-text')
+          .text(d => d.sharedVertices);
+        
+        // Create nodes
+        nodes = svg.selectAll('.node')
+          .data(graphData.nodes)
+          .enter()
+          .append('circle')
+          .attr('class', 'node')
+          .attr('r', 25)
+          .style('filter', 'url(#shadow)')
+          .call(d3.drag()
+            .on('start', dragstarted)
+            .on('drag', dragged)
+            .on('end', dragended));
+        
+        // Create node labels
+        svg.selectAll('.node-label')
+          .data(graphData.nodes)
+          .enter()
+          .append('text')
+          .attr('class', 'node-label node-text')
+          .text(d => d.id);
+        
+        // Start force simulation
+        startSimulation();
+        
+        // Add click handlers
+        nodes.on('click', function(event, d) {
+          const info = `Mesh ${d.id}\nFilename: ${d.name}\nTriangles: ${d.triangles}\nConcavity: ${d.concavity.toFixed(3)}\nAdjacencies: ${d.adjacencies}`;
+          alert(info);
+        });
+      }
+
+      // Force simulation setup
+      function startSimulation() {
+        simulation = d3.forceSimulation(graphData.nodes)
+          .force('link', d3.forceLink(graphData.edges).id(d => d.id).distance(150))
+          .force('charge', d3.forceManyBody().strength(-300))
+          .force('center', d3.forceCenter(500, 300))
+          .force('collision', d3.forceCollide().radius(40))
+          .on('tick', ticked);
+      }
+
+      // Update positions on each tick
+      function ticked() {
+        if (!physicsEnabled) return;
+        
+        edges
+          .attr('x1', d => d.source.x)
+          .attr('y1', d => d.source.y)
+          .attr('x2', d => d.target.x)
+          .attr('y2', d => d.target.y);
+        
+        edgeLabels
+          .attr('x', d => (d.source.x + d.target.x) / 2)
+          .attr('y', d => (d.source.y + d.target.y) / 2 - 5);
+        
+        nodes
+          .attr('cx', d => d.x)
+          .attr('cy', d => d.y);
+        
+        svg.selectAll('.node-label')
+          .attr('x', d => d.x)
+          .attr('y', d => d.y + 4);
+      }
+
+      // Drag functions
+      function dragstarted(event, d) {
+        if (!event.active) simulation.alphaTarget(0.3).restart();
+        d.fx = d.x;
+        d.fy = d.y;
+      }
+
+      function dragged(event, d) {
+        d.fx = event.x;
+        d.fy = event.y;
+      }
+
+      function dragended(event, d) {
+        if (!event.active) simulation.alphaTarget(0);
+        d.fx = null;
+        d.fy = null;
+      }
+
+      // Control functions
+      function resetLayout() {
+        graphData.nodes.forEach(node => {
+          node.x = 500 + 200 * Math.cos(2 * Math.PI * node.id / graphData.nodes.length);
+          node.y = 300 + 200 * Math.sin(2 * Math.PI * node.id / graphData.nodes.length);
+          node.fx = null;
+          node.fy = null;
+        });
+        if (simulation) simulation.alpha(1).restart();
+      }
+
+      function optimizeLayout() {
+        if (simulation) {
+          simulation.alpha(1).restart();
+        }
+      }
+
+      function togglePhysics() {
+        physicsEnabled = !physicsEnabled;
+        if (physicsEnabled) {
+          if (simulation) simulation.alpha(1).restart();
+        }
+        document.querySelector('button[onclick="togglePhysics()"]').textContent = 
+          physicsEnabled ? 'Disable Physics' : 'Enable Physics';
+      }
+
+      // Initialize when page loads
+      window.addEventListener('load', initGraph);
+    </script>
+  </div>
+</body>
+</html>

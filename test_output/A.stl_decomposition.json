@@ -1,0 +1,167 @@
+{
+  "decomposition_info": {
+    "base_filename": "A.stl",
+    "num_meshes": 8,
+    "tree_depth": 3,
+    "total_nodes": 13,
+    "leaf_nodes": 8
+  },
+  "meshes": [
+    {
+      "index": 0,
+      "filename": "A.stl_part_000.stl",
+      "concavity_score": 0.617886,
+      "depth": 3,
+      "num_triangles": 123,
+      "bounds": [1.666732, 0.000000, 0.000000, 8.022152, 9.554794, 1.290651]
+    },
+    {
+      "index": 1,
+      "filename": "A.stl_part_001.stl",
+      "concavity_score": 0.888889,
+      "depth": 3,
+      "num_triangles": 126,
+      "bounds": [3.748411, 0.000000, 0.000000, 9.070001, 9.554794, 1.422467]
+    },
+    {
+      "index": 2,
+      "filename": "A.stl_part_002.stl",
+      "concavity_score": 0.428571,
+      "depth": 3,
+      "num_triangles": 35,
+      "bounds": [-nan, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000]
+    },
+    {
+      "index": 3,
+      "filename": "A.stl_part_003.stl",
+      "concavity_score": 0.916667,
+      "depth": 3,
+      "num_triangles": 48,
+      "bounds": [2381398898990418435907436675072.000000, 0.000000, -0.000000, 0.000000, 0.000000, 0.000000]
+    },
+    {
+      "index": 4,
+      "filename": "A.stl_part_004.stl",
+      "concavity_score": 0.637931,
+      "depth": 3,
+      "num_triangles": 116,
+      "bounds": [1.616029, 0.626204, 0.734588, 7.536832, 9.554794, 2.000000]
+    },
+    {
+      "index": 5,
+      "filename": "A.stl_part_005.stl",
+      "concavity_score": 0.889831,
+      "depth": 3,
+      "num_triangles": 118,
+      "bounds": [0.351452, 0.000000, 0.569816, 5.549448, 9.554794, 2.000000]
+    },
+    {
+      "index": 6,
+      "filename": "A.stl_part_006.stl",
+      "concavity_score": 0.428571,
+      "depth": 3,
+      "num_triangles": 35,
+      "bounds": [2381398898990418435907436675072.000000, 0.000000, -0.000000, 0.000000, 0.000000, 0.000000]
+    },
+    {
+      "index": 7,
+      "filename": "A.stl_part_007.stl",
+      "concavity_score": 0.911111,
+      "depth": 3,
+      "num_triangles": 45,
+      "bounds": [-0.000000, 0.000000, -0.000000, 0.000000, 0.000000, 0.000000]
+    }
+  ],
+  "adjacencies": [
+    {
+      "mesh1": 0,
+      "mesh2": 1,
+      "shared_vertices": 175,
+      "contact_area": 16.994816
+    },
+    {
+      "mesh1": 0,
+      "mesh2": 4,
+      "shared_vertices": 9,
+      "contact_area": 1.345010
+    },
+    {
+      "mesh1": 0,
+      "mesh2": 6,
+      "shared_vertices": 16,
+      "contact_area": 3.709527
+    },
+    {
+      "mesh1": 0,
+      "mesh2": 7,
+      "shared_vertices": 11,
+      "contact_area": 1.315797
+    },
+    {
+      "mesh1": 1,
+      "mesh2": 2,
+      "shared_vertices": 69,
+      "contact_area": 12.186099
+    },
+    {
+      "mesh1": 1,
+      "mesh2": 3,
+      "shared_vertices": 102,
+      "contact_area": 4.216452
+    },
+    {
+      "mesh1": 1,
+      "mesh2": 7,
+      "shared_vertices": 7,
+      "contact_area": 0.294100
+    },
+    {
+      "mesh1": 2,
+      "mesh2": 4,
+      "shared_vertices": 17,
+      "contact_area": 4.499992
+    },
+    {
+      "mesh1": 2,
+      "mesh2": 6,
+      "shared_vertices": 10,
+      "contact_area": 5.840660
+    },
+    {
+      "mesh1": 3,
+      "mesh2": 4,
+      "shared_vertices": 20,
+      "contact_area": 2.284032
+    },
+    {
+      "mesh1": 3,
+      "mesh2": 5,
+      "shared_vertices": 5,
+      "contact_area": 0.207592
+    },
+    {
+      "mesh1": 3,
+      "mesh2": 7,
+      "shared_vertices": 41,
+      "contact_area": 1.369928
+    },
+    {
+      "mesh1": 4,
+      "mesh2": 5,
+      "shared_vertices": 158,
+      "contact_area": 15.195940
+    },
+    {
+      "mesh1": 5,
+      "mesh2": 6,
+      "shared_vertices": 66,
+      "contact_area": 10.102525
+    },
+    {
+      "mesh1": 5,
+      "mesh2": 7,
+      "shared_vertices": 95,
+      "contact_area": 4.011981
+    }
+  ]
+}

@@ -1,0 +1,80 @@
+Mesh Adjacency Information
+==========================
+
+Total meshes: 8
+Total adjacencies: 15
+
+Adjacency Matrix:
+     0  1  2  3  4  5  6  7
+ 0   .  X  .  .  X  .  X  X
+ 1   X  .  X  X  .  .  .  X
+ 2   .  X  .  .  X  .  X  .
+ 3   .  X  .  .  X  X  .  X
+ 4   X  .  X  X  .  X  .  .
+ 5   .  .  .  X  X  .  X  X
+ 6   X  .  X  .  .  X  .  .
+ 7   X  X  .  X  .  X  .  .
+
+Detailed Adjacency Information:
+==============================
+
+Mesh 0 <-> Mesh 1:
+  Shared vertices: 175
+  Contact area: 16.994816
+
+Mesh 0 <-> Mesh 4:
+  Shared vertices: 9
+  Contact area: 1.345010
+
+Mesh 0 <-> Mesh 6:
+  Shared vertices: 16
+  Contact area: 3.709527
+
+Mesh 0 <-> Mesh 7:
+  Shared vertices: 11
+  Contact area: 1.315797
+
+Mesh 1 <-> Mesh 2:
+  Shared vertices: 69
+  Contact area: 12.186099
+
+Mesh 1 <-> Mesh 3:
+  Shared vertices: 102
+  Contact area: 4.216452
+
+Mesh 1 <-> Mesh 7:
+  Shared vertices: 7
+  Contact area: 0.294100
+
+Mesh 2 <-> Mesh 4:
+  Shared vertices: 17
+  Contact area: 4.499992
+
+Mesh 2 <-> Mesh 6:
+  Shared vertices: 10
+  Contact area: 5.840660
+
+Mesh 3 <-> Mesh 4:
+  Shared vertices: 20
+  Contact area: 2.284032
+
+Mesh 3 <-> Mesh 5:
+  Shared vertices: 5
+  Contact area: 0.207592
+
+Mesh 3 <-> Mesh 7:
+  Shared vertices: 41
+  Contact area: 1.369928
+
+Mesh 4 <-> Mesh 5:
+  Shared vertices: 158
+  Contact area: 15.195940
+
+Mesh 5 <-> Mesh 6:
+  Shared vertices: 66
+  Contact area: 10.102525
+
+Mesh 5 <-> Mesh 7:
+  Shared vertices: 95
+  Contact area: 4.011981
+
