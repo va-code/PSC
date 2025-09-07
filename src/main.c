@@ -5,6 +5,7 @@
 #include "topology_evaluator.h"
 #include "PSC_model_inspector.h"
 #include "mesh_adjacency.h"
+#include "coacd_wrapper.h"
 
 
 void print_usage(const char* program_name) {
@@ -112,60 +113,51 @@ int main(int argc, char* argv[]) {
         printf("\n");
     }
     
-    // Convex decomposition visualization
-    decomposition_tree_t* decomposition_tree = NULL;
+    // CoACD convex decomposition visualization
+    coacd_result_t* decomposition_result = NULL;
     if (use_convex_decomposition) {
-        printf("Starting convex decomposition visualization...\n");
-        display_convex_decomposition_tree(stl, convex_threshold, convex_max_depth, PLANE_METHOD_TWO_WORST_PLUS_CENTER, 0);
+        printf("Starting CoACD convex decomposition visualization...\n");
+        display_convex_decomposition_results(stl, convex_threshold, convex_max_depth);
         
-        // Store the decomposition tree for export if needed
+        // Store the decomposition results for export if needed
         if (use_export) {
-            printf("Creating decomposition tree for export...\n");
-            decomposition_tree = decompose_mesh_tree(stl, convex_threshold, convex_max_depth, PLANE_METHOD_TWO_WORST_PLUS_CENTER);
-            if (!decomposition_tree) {
-                fprintf(stderr, "Warning: Failed to create decomposition tree for export\n");
+            printf("Creating CoACD decomposition results for export...\n");
+            if (coacd_init() == 0) {
+                coacd_params_t params = COACD_DEFAULT_PARAMS;
+                params.threshold = convex_threshold;
+                params.max_convex_hull = convex_max_depth;
+                decomposition_result = coacd_decompose(stl, &params);
+                if (!decomposition_result) {
+                    fprintf(stderr, "Warning: Failed to create CoACD decomposition results for export\n");
+                }
+            } else {
+                fprintf(stderr, "Warning: Failed to initialize CoACD for export\n");
             }
         }
     }
     
     // Export functionality
-    if (use_export && decomposition_tree && export_output_dir) {
-        printf("\nExporting decomposed meshes and adjacency information...\n");
+    if (use_export && decomposition_result && export_output_dir) {
+        printf("\nExporting CoACD decomposed meshes...\n");
         
-        // Create export data structure
-        mesh_export_data_t* export_data = create_export_data(decomposition_tree, input_file);
-        if (export_data) {
-            // Export individual meshes
-            if (export_individual_meshes(export_data, export_output_dir)) {
-                printf("Successfully exported %d individual mesh parts\n", export_data->num_meshes);
-            } else {
-                fprintf(stderr, "Warning: Failed to export individual meshes\n");
-            }
+        // Export individual meshes
+        for (int i = 0; i < decomposition_result->count; i++) {
+            char output_filename[256];
+            snprintf(output_filename, sizeof(output_filename), "%s/part_%03d.stl", export_output_dir, i);
             
-            // Export adjacency information
-            if (export_adjacency_info(export_data, export_output_dir)) {
-                printf("Successfully exported adjacency information\n");
+            if (write_stl_file(decomposition_result->meshes[i], output_filename) == 0) {
+                printf("Exported: %s (%d triangles)\n", output_filename, decomposition_result->meshes[i]->num_triangles);
             } else {
-                fprintf(stderr, "Warning: Failed to export adjacency information\n");
+                fprintf(stderr, "Warning: Failed to export %s\n", output_filename);
             }
-            
-            // Export complete decomposition information
-            if (export_decomposition_info_json(export_data, export_output_dir)) {
-                printf("Successfully exported decomposition information\n");
-            } else {
-                fprintf(stderr, "Warning: Failed to export decomposition information\n");
-            }
-            
-            // Cleanup export data
-            free_export_data(export_data);
-        } else {
-            fprintf(stderr, "Warning: Failed to create export data structure\n");
         }
+        
+        printf("Successfully exported %d CoACD decomposed mesh parts\n", decomposition_result->count);
     }
     
     // Cleanup
     if (topology_eval) free_topology_evaluation(topology_eval);
-    if (decomposition_tree) free_decomposition_tree(decomposition_tree);
+    if (decomposition_result) coacd_free_result(decomposition_result);
     stl_free(stl);
     
     printf("\nModel analysis completed successfully!\n");

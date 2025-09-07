@@ -1,0 +1,10 @@
+/home/vaughn/Documents/PSC/build/CMakeFiles/parametric_slicer.dir
+/home/vaughn/Documents/PSC/build/CMakeFiles/PSC_model_inspector.dir
+/home/vaughn/Documents/PSC/build/CMakeFiles/convex_decomposition_coacd.dir
+/home/vaughn/Documents/PSC/build/CMakeFiles/run_tests.dir
+/home/vaughn/Documents/PSC/build/CMakeFiles/edit_cache.dir
+/home/vaughn/Documents/PSC/build/CMakeFiles/rebuild_cache.dir
+/home/vaughn/Documents/PSC/build/CMakeFiles/list_install_components.dir
+/home/vaughn/Documents/PSC/build/CMakeFiles/install.dir
+/home/vaughn/Documents/PSC/build/CMakeFiles/install/local.dir
+/home/vaughn/Documents/PSC/build/CMakeFiles/install/strip.dir

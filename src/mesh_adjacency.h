@@ -2,7 +2,7 @@
 #define MESH_ADJACENCY_H
 
 #include "stl_parser.h"
-#include "convex_decomposition.h"
+#include "convex_decomposition_simple.h"
 
 // Structure to represent adjacency between two meshes
 typedef struct {

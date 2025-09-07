@@ -6,6 +6,10 @@
 #include <string.h>
 #include <math.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 // STL triangle structure
 typedef struct {
     float normal[3];    // Normal vector (x, y, z)
@@ -22,6 +26,7 @@ typedef struct {
 
 // Function declarations
 stl_file_t* stl_load_file(const char* filename);
+int write_stl_file(const stl_file_t* stl, const char* filename);
 void free_stl(stl_file_t* stl);
 int parse_stl_ascii(FILE* file, stl_file_t* stl);
 int parse_stl_binary(FILE* file, stl_file_t* stl);
@@ -29,5 +34,9 @@ void calculate_stl_bounds(stl_file_t* stl);
 void print_stl_info(const stl_file_t* stl);
 void stl_print_info(const stl_file_t* stl);
 void stl_free(stl_file_t* stl);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif // STL_PARSER_H 

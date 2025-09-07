@@ -1,4 +1,5 @@
 #include "PSC_model_inspector.h"
+#include "coacd_wrapper.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -826,164 +827,9 @@ void viewer_cleanup(stl_viewer_t* viewer) {
     glfwTerminate();
 }
 
-// Generate cutting plane geometry as triangles within mesh bounds
-int generate_cutting_plane_triangles(const cutting_plane_t* plane, const float* mesh_bounds, 
-                                    float* vertices, float* normals, float* colors, float plane_size) {
-    if (!plane->is_valid) return 0;
-    
-    // Calculate plane bounds based on mesh bounds and desired size
-    float mesh_size = sqrtf(
-        (mesh_bounds[3] - mesh_bounds[0]) * (mesh_bounds[3] - mesh_bounds[0]) +
-        (mesh_bounds[4] - mesh_bounds[1]) * (mesh_bounds[4] - mesh_bounds[1]) +
-        (mesh_bounds[5] - mesh_bounds[2]) * (mesh_bounds[5] - mesh_bounds[2])
-    );
-    float half_size = mesh_size * plane_size * 0.5f;
-    
-    // Create two perpendicular vectors in the plane
-    float up[3] = {0.0f, 1.0f, 0.0f};
-    float right[3];
-    
-    // Cross product: right = normal × up
-    right[0] = plane->normal[1] * up[2] - plane->normal[2] * up[1];
-    right[1] = plane->normal[2] * up[0] - plane->normal[0] * up[2];
-    right[2] = plane->normal[0] * up[1] - plane->normal[1] * up[0];
-    
-    // If normal is parallel to up, use different reference
-    float right_len = sqrtf(right[0]*right[0] + right[1]*right[1] + right[2]*right[2]);
-    if (right_len < 1e-6f) {
-        up[0] = 1.0f; up[1] = 0.0f; up[2] = 0.0f;
-        right[0] = plane->normal[1] * up[2] - plane->normal[2] * up[1];
-        right[1] = plane->normal[2] * up[0] - plane->normal[0] * up[2];
-        right[2] = plane->normal[0] * up[1] - plane->normal[1] * up[0];
-        right_len = sqrtf(right[0]*right[0] + right[1]*right[1] + right[2]*right[2]);
-    }
-    
-    // Normalize right vector
-    if (right_len > 1e-6f) {
-        right[0] /= right_len;
-        right[1] /= right_len;
-        right[2] /= right_len;
-    }
-    
-    // Calculate up vector in plane: up = right × normal
-    up[0] = right[1] * plane->normal[2] - right[2] * plane->normal[1];
-    up[1] = right[2] * plane->normal[0] - right[0] * plane->normal[2];
-    up[2] = right[0] * plane->normal[1] - right[1] * plane->normal[0];
-    
-    // Generate quad vertices centered on plane center
-    float quad_verts[4][3];
-    for (int i = 0; i < 4; i++) {
-        float x_sign = (i == 0 || i == 3) ? -1.0f : 1.0f;
-        float y_sign = (i < 2) ? -1.0f : 1.0f;
-        
-        quad_verts[i][0] = plane->center[0] + half_size * (x_sign * right[0] + y_sign * up[0]);
-        quad_verts[i][1] = plane->center[1] + half_size * (x_sign * right[1] + y_sign * up[1]);
-        quad_verts[i][2] = plane->center[2] + half_size * (x_sign * right[2] + y_sign * up[2]);
-    }
-    
-    // Create two triangles from the quad
-    // Triangle 1: 0, 1, 2
-    // Triangle 2: 0, 2, 3
-    int tri_indices[6] = {0, 1, 2, 0, 2, 3};
-    
-    // Semi-transparent blue color for cutting planes
-    float plane_color[3] = {0.3f, 0.6f, 1.0f};
-    
-    for (int tri = 0; tri < 2; tri++) {
-        for (int vert = 0; vert < 3; vert++) {
-            int idx = tri * 3 + vert;
-            int quad_idx = tri_indices[idx];
-            
-            // Copy vertex position
-            vertices[idx * 3 + 0] = quad_verts[quad_idx][0];
-            vertices[idx * 3 + 1] = quad_verts[quad_idx][1];
-            vertices[idx * 3 + 2] = quad_verts[quad_idx][2];
-            
-            // Copy normal
-            normals[idx * 3 + 0] = plane->normal[0];
-            normals[idx * 3 + 1] = plane->normal[1];
-            normals[idx * 3 + 2] = plane->normal[2];
-            
-            // Copy color
-            colors[idx * 3 + 0] = plane_color[0];
-            colors[idx * 3 + 1] = plane_color[1];
-            colors[idx * 3 + 2] = plane_color[2];
-        }
-    }
-    
-    return 6; // 2 triangles × 3 vertices = 6 vertices
-}
+// Removed: cutting plane functions no longer needed with CoACD
 
-// Collect all cutting planes from the tree recursively
-void collect_cutting_planes(const mesh_tree_node_t* node, cutting_plane_t* planes, int* count, int max_planes) {
-    if (!node || *count >= max_planes) return;
-    
-    if (node->cutting_plane.is_valid) {
-        planes[*count] = node->cutting_plane;
-        (*count)++;
-    }
-    
-    if (node->left_child) {
-        collect_cutting_planes(node->left_child, planes, count, max_planes);
-    }
-    if (node->right_child) {
-        collect_cutting_planes(node->right_child, planes, count, max_planes);
-    }
-}
-
-// Print cutting plane information recursively
-void print_cutting_planes(const mesh_tree_node_t* node, int indent) {
-    if (!node) return;
-    
-    // Print indentation
-    for (int i = 0; i < indent; i++) {
-        printf("  ");
-    }
-    
-    if (node->cutting_plane.is_valid) {
-        printf("Node depth=%d: Cutting plane defined by:\n", node->depth);
-        
-        for (int i = 0; i < indent + 1; i++) {
-            printf("  ");
-        }
-        printf("Point 1: (%.3f, %.3f, %.3f)\n", 
-               node->cutting_plane.point1[0], node->cutting_plane.point1[1], node->cutting_plane.point1[2]);
-        
-        for (int i = 0; i < indent + 1; i++) {
-            printf("  ");
-        }
-        printf("Point 2: (%.3f, %.3f, %.3f)\n", 
-               node->cutting_plane.point2[0], node->cutting_plane.point2[1], node->cutting_plane.point2[2]);
-        
-        for (int i = 0; i < indent + 1; i++) {
-            printf("  ");
-        }
-        printf("Point 3: (%.3f, %.3f, %.3f)\n", 
-               node->cutting_plane.point3[0], node->cutting_plane.point3[1], node->cutting_plane.point3[2]);
-        
-        for (int i = 0; i < indent + 1; i++) {
-            printf("  ");
-        }
-        printf("Normal: (%.3f, %.3f, %.3f)\n", 
-               node->cutting_plane.normal[0], node->cutting_plane.normal[1], node->cutting_plane.normal[2]);
-        
-        for (int i = 0; i < indent + 1; i++) {
-            printf("  ");
-        }
-        printf("Center: (%.3f, %.3f, %.3f)\n", 
-               node->cutting_plane.center[0], node->cutting_plane.center[1], node->cutting_plane.center[2]);
-    } else {
-        printf("Node depth=%d: No cutting plane (leaf node)\n", node->depth);
-    }
-    
-    // Recursively print child nodes
-    if (node->left_child) {
-        print_cutting_planes(node->left_child, indent + 1);
-    }
-    if (node->right_child) {
-        print_cutting_planes(node->right_child, indent + 1);
-    }
-}
+// Removed: tree traversal functions no longer needed with CoACD
 
 // Generate random color for a given index using a simple hash-based approach
 void generate_random_color(int index, float* r, float* g, float* b) {
@@ -1009,48 +855,28 @@ void generate_random_color(int index, float* r, float* g, float* b) {
     if (*b > 1.0f) *b = 1.0f;
 }
 
-// Load and display decomposition tree in viewer with random colors
-int viewer_load_decomposition_tree(stl_viewer_t* viewer, const decomposition_tree_t* tree, int show_cutting_planes) {
-    if (!viewer || !tree || !tree->root) {
+// Load and display CoACD decomposition results in viewer with random colors
+int viewer_load_decomposition_results(stl_viewer_t* viewer, const coacd_result_t* result) {
+    if (!viewer || !result || result->count == 0) {
         return 0;
     }
     
-    // Get all leaf nodes (final decomposed meshes)
-    mesh_tree_node_t* leaves[256];
-    int num_leaves = get_leaf_nodes(tree, leaves, 256);
+    printf("Loading %d decomposed mesh pieces with random colors\n", result->count);
     
-    if (num_leaves == 0) {
-        printf("No leaf nodes found in decomposition tree\n");
-        return 0;
-    }
-    
-    printf("Loading %d decomposed mesh pieces with random colors\n", num_leaves);
-    
-    // Calculate total triangles needed for mesh pieces
-    unsigned int mesh_triangles = 0;
-    for (int i = 0; i < num_leaves; i++) {
-        if (leaves[i]->mesh) {
-            mesh_triangles += leaves[i]->mesh->num_triangles;
+    // Calculate total triangles needed
+    unsigned int total_triangles = 0;
+    for (int i = 0; i < result->count; i++) {
+        if (result->meshes[i]) {
+            total_triangles += result->meshes[i]->num_triangles;
         }
     }
     
-    // Add cutting plane triangles if requested
-    unsigned int cutting_plane_triangles = 0;
-    cutting_plane_t cutting_planes[64];  // Support up to 64 cutting planes
-    int num_cutting_planes = 0;
-    
-    if (show_cutting_planes) {
-        collect_cutting_planes(tree->root, cutting_planes, &num_cutting_planes, 64);
-        cutting_plane_triangles = num_cutting_planes * 2; // 2 triangles per plane
-        printf("Adding %d cutting planes (%d triangles) to visualization\n", 
-               num_cutting_planes, cutting_plane_triangles);
-    }
-    
-    unsigned int total_triangles = mesh_triangles + cutting_plane_triangles;
     if (total_triangles == 0) {
         printf("No triangles found in decomposed meshes\n");
         return 0;
     }
+    
+    printf("Total triangles to render: %u\n", total_triangles);
     
     // Allocate vertex data for all triangles
     unsigned int total_vertices = total_triangles * 3;
@@ -1070,16 +896,16 @@ int viewer_load_decomposition_tree(stl_viewer_t* viewer, const decomposition_tre
     unsigned int vertex_offset = 0;
     unsigned int triangle_offset = 0;
     
-    for (int leaf_idx = 0; leaf_idx < num_leaves; leaf_idx++) {
-        const stl_file_t* mesh = leaves[leaf_idx]->mesh;
+    for (int i = 0; i < result->count; i++) {
+        const stl_file_t* mesh = result->meshes[i];
         if (!mesh) continue;
         
-        // Generate random color for this leaf node
+        // Generate random color for this mesh piece
         float r, g, b;
-        generate_random_color(leaf_idx, &r, &g, &b);
+        generate_random_color(i, &r, &g, &b);
         
-        printf("Leaf %d: %u triangles, color (%.2f, %.2f, %.2f), concavity %.3f\n", 
-               leaf_idx, mesh->num_triangles, r, g, b, leaves[leaf_idx]->concavity_score);
+        printf("Mesh piece %d: %u triangles, color (%.2f, %.2f, %.2f)\n", 
+               i, mesh->num_triangles, r, g, b);
         
         // Add triangles from this mesh
         for (unsigned int tri_idx = 0; tri_idx < mesh->num_triangles; tri_idx++) {
@@ -1116,83 +942,18 @@ int viewer_load_decomposition_tree(stl_viewer_t* viewer, const decomposition_tre
         }
     }
     
-    // Add cutting plane geometry if requested
-    if (show_cutting_planes && num_cutting_planes > 0) {
-        // Calculate overall mesh bounds for plane sizing
-        float overall_bounds[6] = {FLT_MAX, FLT_MAX, FLT_MAX, -FLT_MAX, -FLT_MAX, -FLT_MAX};
-        for (int leaf_idx = 0; leaf_idx < num_leaves; leaf_idx++) {
-            const stl_file_t* mesh = leaves[leaf_idx]->mesh;
-            if (mesh) {
-                if (mesh->bounds[0] < overall_bounds[0]) overall_bounds[0] = mesh->bounds[0];
-                if (mesh->bounds[1] < overall_bounds[1]) overall_bounds[1] = mesh->bounds[1];
-                if (mesh->bounds[2] < overall_bounds[2]) overall_bounds[2] = mesh->bounds[2];
-                if (mesh->bounds[3] > overall_bounds[3]) overall_bounds[3] = mesh->bounds[3];
-                if (mesh->bounds[4] > overall_bounds[4]) overall_bounds[4] = mesh->bounds[4];
-                if (mesh->bounds[5] > overall_bounds[5]) overall_bounds[5] = mesh->bounds[5];
-            }
-        }
-        
-        // Add each cutting plane as 2 triangles (6 vertices)
-        for (int plane_idx = 0; plane_idx < num_cutting_planes; plane_idx++) {
-            float plane_vertices[18];  // 6 vertices × 3 coords = 18 floats
-            float plane_normals[18];   // 6 vertices × 3 coords = 18 floats
-            float plane_colors[18];    // 6 vertices × 3 coords = 18 floats
-            
-            int verts_generated = generate_cutting_plane_triangles(
-                &cutting_planes[plane_idx], overall_bounds, 
-                plane_vertices, plane_normals, plane_colors, 0.8f  // 80% of mesh size
-            );
-            
-            if (verts_generated == 6) {
-                // Copy cutting plane vertices to main vertex data
-                for (int v = 0; v < 6; v++) {
-                    int vert_idx = vertex_offset + v;
-                    
-                    // Position (XYZ)
-                    viewer->vertex_data[vert_idx * 9 + 0] = plane_vertices[v * 3 + 0];
-                    viewer->vertex_data[vert_idx * 9 + 1] = plane_vertices[v * 3 + 1];
-                    viewer->vertex_data[vert_idx * 9 + 2] = plane_vertices[v * 3 + 2];
-                    
-                    // Normal (XYZ)
-                    viewer->vertex_data[vert_idx * 9 + 3] = plane_normals[v * 3 + 0];
-                    viewer->vertex_data[vert_idx * 9 + 4] = plane_normals[v * 3 + 1];
-                    viewer->vertex_data[vert_idx * 9 + 5] = plane_normals[v * 3 + 2];
-                    
-                    // Color (RGB) - semi-transparent blue
-                    viewer->vertex_data[vert_idx * 9 + 6] = plane_colors[v * 3 + 0];
-                    viewer->vertex_data[vert_idx * 9 + 7] = plane_colors[v * 3 + 1];
-                    viewer->vertex_data[vert_idx * 9 + 8] = plane_colors[v * 3 + 2];
-                }
-                
-                vertex_offset += 6;
-                
-                // Set triangle colors for the 2 triangles of this plane
-                for (int t = 0; t < 2; t++) {
-                    viewer->triangle_colors[triangle_offset * 3 + 0] = 0.3f; // Blue
-                    viewer->triangle_colors[triangle_offset * 3 + 1] = 0.6f;
-                    viewer->triangle_colors[triangle_offset * 3 + 2] = 1.0f;
-                    viewer->triangle_checked[triangle_offset] = 0;
-                    triangle_offset++;
-                }
-            }
-        }
-    }
-    
     // Set up camera position (exactly same as regular STL viewer)
     // Calculate model center and bounding box from all vertices
     float min_bounds[3] = {FLT_MAX, FLT_MAX, FLT_MAX};
     float max_bounds[3] = {-FLT_MAX, -FLT_MAX, -FLT_MAX};
     
     // Calculate bounds from all decomposed mesh vertices
-    printf("DEBUG: Calculating bounds from %d leaf meshes\n", num_leaves);
-    for (int leaf_idx = 0; leaf_idx < num_leaves; leaf_idx++) {
-        const stl_file_t* mesh = leaves[leaf_idx]->mesh;
+    for (int i = 0; i < result->count; i++) {
+        const stl_file_t* mesh = result->meshes[i];
         if (!mesh) continue;
         
-        printf("DEBUG: Leaf %d has %u triangles\n", leaf_idx, mesh->num_triangles);
-        
-        for (unsigned int i = 0; i < mesh->num_triangles; i++) {
-            const stl_triangle_t* tri = &mesh->triangles[i];
+        for (unsigned int tri_idx = 0; tri_idx < mesh->num_triangles; tri_idx++) {
+            const stl_triangle_t* tri = &mesh->triangles[tri_idx];
             for (int j = 0; j < 3; j++) {
                 for (int k = 0; k < 3; k++) {
                     if (tri->vertices[j][k] < min_bounds[k]) min_bounds[k] = tri->vertices[j][k];
@@ -1229,8 +990,6 @@ int viewer_load_decomposition_tree(stl_viewer_t* viewer, const decomposition_tre
     viewer->camera_pos[1] = viewer->camera_target[1] + (dir_y * required_dist);
     viewer->camera_pos[2] = viewer->camera_target[2] + (dir_z * required_dist);
     
-    // Log camera and model information for debugging (removed to prevent terminal spam)
-    
     viewer->world_up[0] = 0.0f;
     viewer->world_up[1] = -1.0f;
     viewer->world_up[2] = 0.0f;
@@ -1254,47 +1013,49 @@ int viewer_load_decomposition_tree(stl_viewer_t* viewer, const decomposition_tre
     return 1;
 }
 
-// Display convex decomposition tree with random colors for each node
-void display_convex_decomposition_tree(const stl_file_t* stl, float concavity_threshold, int max_depth, plane_generation_method_t plane_method, int show_cutting_planes) {
-    printf("Starting convex decomposition...\n");
+// Display CoACD convex decomposition results with random colors for each part
+void display_convex_decomposition_results(const stl_file_t* stl, float concavity_threshold, int max_parts) {
+    printf("Starting CoACD convex decomposition...\n");
     printf("Concavity threshold: %.3f\n", concavity_threshold);
-    printf("Max depth: %d\n", max_depth);
+    printf("Max parts: %d\n", max_parts);
     
-    // Perform convex decomposition using the specified plane method
-    decomposition_tree_t* tree = decompose_mesh_tree(stl, concavity_threshold, max_depth, plane_method);
-    if (!tree) {
-        printf("Failed to decompose mesh\n");
+    // Initialize CoACD
+    if (coacd_init() != 0) {
+        printf("Failed to initialize CoACD\n");
         return;
     }
     
-    // Print tree structure
-    print_decomposition_tree(tree);
+    // Set up CoACD parameters
+    coacd_params_t params = COACD_DEFAULT_PARAMS;
+    params.threshold = concavity_threshold;
+    params.max_convex_hull = max_parts;
     
-    // Print cutting plane information if requested
-    if (show_cutting_planes) {
-        printf("\nCutting Plane Information:\n");
-        printf("==========================\n");
-        print_cutting_planes(tree->root, 0);
-        printf("\n");
+    // Perform convex decomposition using CoACD
+    coacd_result_t* result = coacd_decompose(stl, &params);
+    if (!result) {
+        printf("Failed to decompose mesh with CoACD\n");
+        return;
     }
+    
+    printf("CoACD decomposition successful: %d convex parts\n", result->count);
     
     // Initialize viewer
     stl_viewer_t* viewer = viewer_init(1000, 800);
     if (!viewer) {
         printf("Failed to initialize viewer\n");
-        free_decomposition_tree(tree);
+        coacd_free_result(result);
         return;
     }
     
-    // Load decomposition tree into viewer
-    if (!viewer_load_decomposition_tree(viewer, tree, show_cutting_planes)) {
-        printf("Failed to load decomposition tree into viewer\n");
+    // Load decomposition results into viewer
+    if (!viewer_load_decomposition_results(viewer, result)) {
+        printf("Failed to load decomposition results into viewer\n");
         viewer_cleanup(viewer);
-        free_decomposition_tree(tree);
+        coacd_free_result(result);
         return;
     }
     
-    printf("Convex decomposition viewer ready!\n");
+    printf("CoACD decomposition viewer ready!\n");
     printf("Controls:\n");
     printf("  - Left mouse button + drag: Rotate view\n");
     printf("  - ESC: Exit viewer\n");
@@ -1314,9 +1075,10 @@ void display_convex_decomposition_tree(const stl_file_t* stl, float concavity_th
     
     // Cleanup
     viewer_cleanup(viewer);
-    free_decomposition_tree(tree);
-    printf("Convex decomposition viewer closed.\n");
+    coacd_free_result(result);
+    printf("CoACD decomposition viewer closed.\n");
 }
+
 
 
 

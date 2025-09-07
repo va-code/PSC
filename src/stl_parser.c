@@ -188,4 +188,41 @@ void stl_print_info(const stl_file_t* stl) {
 
 void stl_free(stl_file_t* stl) {
     free_stl(stl);
+}
+
+// Write STL file (binary format)
+int write_stl_file(const stl_file_t* stl, const char* filename) {
+    if (!stl || !filename) {
+        return 0;
+    }
+    
+    FILE* file = fopen(filename, "wb");
+    if (!file) {
+        printf("ERROR: Cannot open file for writing: %s\n", filename);
+        return 0;
+    }
+    
+    // Write header (80 bytes)
+    fwrite(stl->header, 1, 80, file);
+    
+    // Write number of triangles (4 bytes)
+    fwrite(&stl->num_triangles, sizeof(unsigned int), 1, file);
+    
+    // Write triangles
+    for (unsigned int i = 0; i < stl->num_triangles; i++) {
+        const stl_triangle_t* tri = &stl->triangles[i];
+        
+        // Write normal (12 bytes)
+        fwrite(tri->normal, sizeof(float), 3, file);
+        
+        // Write vertices (36 bytes)
+        fwrite(tri->vertices, sizeof(float), 9, file);
+        
+        // Write attribute byte count (2 bytes) - always 0 for our format
+        unsigned short attribute_byte_count = 0;
+        fwrite(&attribute_byte_count, sizeof(unsigned short), 1, file);
+    }
+    
+    fclose(file);
+    return 1;
 } 

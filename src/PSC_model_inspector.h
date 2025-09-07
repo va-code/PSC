@@ -3,7 +3,7 @@
 
 #include "stl_parser.h"
 #include "topology_evaluator.h"
-#include "convex_decomposition.h"
+#include "convex_decomposition_simple.h"
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
 
@@ -61,11 +61,8 @@ void display_topology_visualization(const stl_file_t* stl);
 // Edge callback for topology visualization
 void topology_edge_callback(unsigned int edge_index, void* user_data);
 
-// Display convex decomposition tree with random colors for each node
-void display_convex_decomposition_tree(const stl_file_t* stl, float concavity_threshold, int max_depth, plane_generation_method_t plane_method, int show_cutting_planes);
-
-// Load and display decomposition tree in viewer with random colors
-int viewer_load_decomposition_tree(stl_viewer_t* viewer, const decomposition_tree_t* tree, int show_cutting_planes);
+// Display convex decomposition results with random colors for each part
+void display_convex_decomposition_results(const stl_file_t* stl, float concavity_threshold, int max_parts);
 
 // Generate random color for a given index
 void generate_random_color(int index, float* r, float* g, float* b);
